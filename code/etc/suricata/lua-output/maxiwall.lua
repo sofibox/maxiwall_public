@@ -68,7 +68,7 @@ function csf_block(ip, comment)
     local get_csf_block_status
     logNotice("=== START csf_block() ===")
 
-    get_csf_block_status = tostring(exec_read_line("maxiwall cmd block-target '" .. ip .. "' " .. comment))
+    get_csf_block_status = tostring(exec_read_line("maxiwall cmd block-target '" .. ip .. "' '" .. comment .. "'"))
 
     if get_csf_block_status == "error-no-dns-record" then
         logNotice("Error, could not resolve given IP or target")
@@ -91,6 +91,7 @@ function csf_block(ip, comment)
 
     logNotice("csf_block_status_label_description: " .. tostring(csf_block_status_label_description) .. " | type: " .. type(csf_block_status_label_description))
     logNotice("csf_alert_action: " .. tostring(csf_alert_action) .. " | type: " .. type(csf_alert_action))
+    logNotice("csf_block_status: " .. tostring(csf_block_status) .. " | type: " .. type(csf_block_status))
 
     logNotice("=== END csf_block() ===")
 end
@@ -100,7 +101,6 @@ function send_alert()
 end
 
 -- This function sends email report, email must be set in maxiwall.conf
--- TODO test this
 function send_mail(mail_content, mail_subject)
 
     -- Writing the mail content into file
@@ -216,13 +216,23 @@ function aipdb_scan(ip)
     logNotice("=== END aipdb_scan() ===")
 end
 
-function aipdb_web_report(ip, category, comment)
+function aipdb_send_web_report(ip, category, comment)
 
-end
+    aipdb_get_ip_report_status = to_boolean(exec_read_line("maxiwall cmd 'aipdb-report-ip-info' '" .. ip .. "' '" .. category .. "' '" .. comment .. "'"))
 
--- this will be used as final judgement
-function validate_ip_score(ip)
+    if aipdb_get_ip_report_status == "error-no-dns-record" or aipdb_get_ip_report_status == "warning-curl-has-error" or aipdb_get_ip_report_status == "warning-api-has-error" then
+        logNotice("Notice, there was error when sending aipdb web report. Skipping ...")
+        aipdb_get_ip_report_status = tostring(aipdb_get_ip_report_status)
+        return 0
+    end
 
+    if aipdb_get_ip_report_status == "notice-ip-already-cache" then
+        logNotice("Notice, IP already cache in report file. Skipping ...")
+        aipdb_get_ip_report_status = tostring(aipdb_get_ip_report_status)
+        return 0
+    end
+
+    logNotice("aipdb_get_ip_report_status: " .. tostring(aipdb_get_ip_report_status) .. " | type: " .. type(aipdb_get_ip_report_status))
 end
 
 function blcheck_scan(ip)
@@ -400,6 +410,7 @@ end
 function setup ()
 
     maxiwall_score_label = ""
+
     -- Get enable whitelist IP setting
     is_maxiwall_enable_whitelist_ip = to_boolean(exec_read_line("maxiwall cmd get-maxiwall-enable-whitelist-ip"))
 
@@ -487,7 +498,7 @@ function setup ()
     -- All AIPDB global variables
 
     is_aipdb_enable_rule = to_boolean(exec_read_line("maxiwall cmd get-aipdb-enable-rule"))
-
+    is_aipdb_enable_ip_web_report = to_boolean(exec_read_line("maxiwall cmd get-aipdb-enable-ip-web-report"))
     aipdb_ip = ""
     aipdb_target = ""
     aipdb_time = ""
@@ -507,6 +518,9 @@ function setup ()
     aipdb_cache_label_status_description = ""
     -- This status is obtained when doing IP cache for aipdb
     aipdb_ip_cache_status = ""
+
+    -- this is for web report
+    aipdb_get_ip_report_status = ""
 
     -- All blcheck global variable
 
@@ -746,12 +760,18 @@ function log()
         elseif string.match(class, "Denial of Service") then
             -- DDOS Attack
             suricata_suspicious_category = "4"
-        elseif maxiwall_log_attack_category ~= "0" then
-            -- Use category from the log suspicious from Maxiwall if it exist
-            suricata_suspicious_category = maxiwall_log_attack_category
+
         else
-            -- If not above just use the default category, Hacking.
-            suricata_suspicious_category = "15"
+            if is_maxiwall_enable_log_rule == true then
+                if maxiwall_log_attack_category ~= "0" then
+                    -- Use category from the log suspicious from Maxiwall if it exist
+                    suricata_suspicious_category = maxiwall_log_attack_category
+                end
+            else
+                -- If not above just use the default category, Hacking.
+                suricata_suspicious_category = "15"
+            end
+
         end
 
         if string.match(SCRuleMsg(), "SQL INJECTION") then
@@ -760,7 +780,6 @@ function log()
         end
 
         logNotice("Suricata attack_category is: " .. suricata_suspicious_category)
-
 
         -- Building report string template
         -- This is for both critical and non-critical log aka default log like fast.log
@@ -772,7 +791,6 @@ function log()
         -- Write the log into file
         alert_log_open:write(str_report)
         alert_log_open:flush()
-
 
         -- Get the source ip count Inbound
         maxiwall_src_ip_total_count = tonumber(exec_read_line("maxiwall cmd get-maxiwall-alert-source-ip-count '" .. suspected_ip .. "'"))
@@ -799,12 +817,14 @@ function log()
                 logNotice("Notice, AIPDB abuse_score rule >=80 condition is matched")
                 if is_csf_enable_auto_block == true then
                     logNotice("CSF auto block is enable. Blocking IP " .. suspected_ip .. " using CSF ...")
-                    local block_comment = "Blocked by MAXIWALL.lua_AIPDB_aipdb_abuse_score [GeoIP: " .. aipdb_isp .. "/" .. aipdb_usage_type .. "/"
+                    local csf_block_comment = "Blocked by MAXIWALL.lua_AIPDB_aipdb_abuse_score [GeoIP: " .. aipdb_isp .. "/" .. aipdb_usage_type .. "/"
                             .. aipdb_domain .. "/" .. aipdb_country_code .. " [AIPDB_Abuse_Score:" .. aipdb_abuse_score
                             .. "% [Suricata_Alert_Level: " .. suricata_alert_level_label .. " [Inbound_Outbound: " .. src_dst_total_count .. " [Suricata_MSG: " .. msg
-                    -- Tell CSF do not remove this IP even if it is reached limit
-                    csf_block(suspected_ip, block_comment .. " #do not delete")
-                    logNotice("CSF blocking status is: " .. csf_block_status)
+                    -- Tell CSF do not remove this IP even if it is reached limit if aipdb_abuse_score is 100%
+                    if (tonumber(aipdb_abuse_score) == 100) then
+                        csf_block_comment = tostring(csf_block_comment) .. " # do not delete"
+                    end
+                    csf_block(suspected_ip, tostring(csf_block_comment))
                 else
                     logNotice("CSF auto block is disabled but this IP has bad rule")
                     csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
@@ -818,7 +838,6 @@ function log()
             logNotice("Notice, AIPDB abuse_score rule >=80 condition did not trigger because is_aipdb_enable_rule is disabled ")
         end
 
-
         -- This is the second rule blacklist count must be >=5 and maxiwall_log_suspicious_count >=1
         if is_blcheck_enable_rule == true and is_maxiwall_enable_log_rule == true then
             if (tonumber(blcheck_blacklisted_count) >= 5 and tonumber(maxiwall_log_suspicious_count >= 1)) then
@@ -826,18 +845,15 @@ function log()
                 logNotice("Notice, blcheck_blacklisted_count >=5 and maxiwall_log_suspicious_count >=1 condition is matched")
                 if is_csf_enable_auto_block == true then
                     logNotice("CSF auto block is enable. Blocking IP " .. suspected_ip .. " using CSF ...")
-                    local block_comment = "Blocked by MAXIWALL.lua_BLCHECK_blcheck&LOG_SCANNER_maxiwall_log_suspicious_count [Blcheck_Reputation_Score:" .. blcheck_reputation_score
+                    local csf_block_comment = "Blocked by MAXIWALL.lua_BLCHECK_blcheck&LOG_SCANNER_maxiwall_log_suspicious_count [Blcheck_Reputation_Score:" .. blcheck_reputation_score
                             .. " % [Maxiwall_Log_Suspicious_Score: " .. maxiwall_log_suspicious_score .. " % [Suricata_Alert_Level: " .. suricata_alert_level_label
                             .. " [Inbound_Outbound: " .. src_dst_total_count .. " [Suricata_MSG: " .. msg
-                    csf_block(suspected_ip, block_comment)
-                    logNotice("CSF blocking status is: " .. csf_block_status)
+                    csf_block(suspected_ip, csf_block_comment)
                 else
                     logNotice("CSF auto block is disabled but this IP has bad rule")
                     csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
                     csf_alert_action = "No action for this because CSF auto block is not set but the bad rule has been triggered for this IP. You must take action!"
-
                 end
-
             else
                 logNotice("Notice, blcheck_blacklisted_count >=5 and maxiwall_log_suspicious_count >=1 rules did not trigger")
             end
@@ -847,23 +863,20 @@ function log()
 
         -- This is the third rule aipdb_abuse_score >=65 and blcheck_blacklisted_count >=2
         if is_aipdb_enable_rule == true and is_blcheck_enable_rule == true then
-
             if (tonumber(aipdb_abuse_score) >= 65 and tonumber(blcheck_blacklisted_count) >= 2) then
                 maxiwall_score_label = "bad"
                 logNotice("Notice, aipdb_abuse_score >=65 and blcheck_blacklisted_count >=2 condition is matched")
                 if is_csf_enable_auto_block == true then
                     logNotice("CSF auto block is enable. Blocking IP " .. suspected_ip .. " using CSF ...")
-                    local block_comment = "Blocked by MAXIWALL.lua_AIPDB_aipdb_abuse_score&BLCHECK_blcheck_blacklisted_count [GeoIP: " .. aipdb_isp .. "/" .. aipdb_usage_type .. "/"
+                    local csf_block_comment = "Blocked by MAXIWALL.lua_AIPDB_aipdb_abuse_score&BLCHECK_blcheck_blacklisted_count [GeoIP: " .. aipdb_isp .. "/" .. aipdb_usage_type .. "/"
                             .. aipdb_domain .. "/" .. aipdb_country_code .. " [AIPDB_Abuse_Score:" .. aipdb_abuse_score .. " % [Blcheck_Reputation_Score: " .. blcheck_reputation_score
                             .. " % [Suricata_Alert_Level: " .. suricata_alert_level_label
                             .. " [Inbound_Outbound: " .. src_dst_total_count .. " [Suricata_MSG: " .. msg
-                    csf_block(suspected_ip, block_comment)
-                    logNotice("CSF blocking status is: " .. csf_block_status)
+                    csf_block(suspected_ip, csf_block_comment)
                 else
                     logNotice("CSF auto block is disabled but this IP has bad rule")
                     csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
                     csf_alert_action = "No action for this because CSF auto block is not set but the bad rule has been triggered for this IP. You must take action!"
-
                 end
             else
                 logNotice("Notice, aipdb_abuse_score >=65 and blcheck_blacklisted_count >=2 rules did not trigger")
@@ -874,16 +887,14 @@ function log()
         end
 
         -- This is the fourth rule suricata priority level either 1 (Very High Risk) or 2 (High Risk)
-
         if (tonumber(priority) == 1) or (tonumber(priority) == 2) then
             maxiwall_score_label = "bad"
             logNotice("Notice, suricata rule priority=1 or suricata rule priority=2 condition is matched")
             if is_csf_enable_auto_block == true then
                 logNotice("CSF auto block is enable. Blocking IP " .. suspected_ip .. " using CSF ...")
-                local block_comment = "Blocked by MAXIWALL.LUA_SURICATA_priority [Alert_Level: " .. suricata_alert_level_label .. " [Inbound_Outbound: " .. src_dst_total_count
+                local csf_block_comment = "Blocked by MAXIWALL.LUA_SURICATA_priority [Alert_Level: " .. suricata_alert_level_label .. " [Inbound_Outbound: " .. src_dst_total_count
                         .. " [Suricata_MSG: " .. msg
-                csf_block(suspected_ip, block_comment)
-                logNotice("CSF blocking status is: " .. csf_block_status)
+                csf_block(suspected_ip, csf_block_comment)
             else
                 logNotice("CSF auto block is disabled but this IP has bad rule")
                 csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
@@ -902,17 +913,17 @@ function log()
                 logNotice("Notice, mod_security_alert=true condition is matched")
                 if is_csf_enable_auto_block == true then
                     logNotice("CSF auto block is enable. Blocking IP " .. suspected_ip .. " using CSF ...")
-                    local block_comment = "Blocked by MAXIWALL.LUA_LOG_SCANNER_mod_security_alert [Blcheck_Reputation_Score: " .. blcheck_reputation_score
+                    local csf_block_comment = "Blocked by MAXIWALL.LUA_LOG_SCANNER_mod_security_alert [Blcheck_Reputation_Score: " .. blcheck_reputation_score
                             .. " % [Mod_Security_Alert: " .. mod_security_alert .. " [Suricata_Alert_Level: " .. suricata_alert_level_label
                             .. " [Inbound_Outbound: " .. src_dst_total_count .. " [Suricata_MSG: " .. msg
-                    csf_block(suspected_ip, block_comment)
-                    logNotice("CSF blocking status is: " .. csf_block_status)
+                    csf_block(suspected_ip, csf_block_comment)
                 else
                     logNotice("CSF auto block is disabled but this IP has bad rule")
                     csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
                     csf_alert_action = "No action for this because CSF auto block is not set but the bad rule has been triggered for this IP. You must take action!"
 
                 end
+
             else
                 logNotice("Notice, mod_security_alert=true condition did not trigger")
             end
@@ -922,11 +933,42 @@ function log()
 
         if is_csf_enable_auto_block == true then
             if csf_block_status == "ip-already-blocked" then
-                maxiwall_score_label="bad"
+                maxiwall_score_label = "bad"
             end
         end
 
-        if maxiwall_score_label == "unknown" then
+        -- When the IP is bad do something extra here (like report to AIPDB)
+        if maxiwall_score_label == "bad" then
+            logNotice("Notice, this IP overall score is: " .. maxiwall_score_label)
+            if is_aipdb_enable_ip_web_report == true then
+                -- populate AIPDB report comments
+                logNotice("Notice, is_aipdb_enable_ip_web_report is enable")
+
+                local report_comment
+
+                report_comment = "[bad_ip: " .. suspected_ip .. " [alert_level: " .. suricata_alert_level_label
+                        .. " [inbound(".. maxiwall_src_ip_total_count ..")+outbound(" .. maxiwall_dst_ip_total_count .. "): " .. tostring(src_dst_total_count)
+                        .. " [target_port: " .. dst_port .. " [suricata_msg: " .. msg
+
+                if is_blcheck_enable_rule == true then
+                    logNotice("Notice, is_blcheck_enable_rule is enable so populating the report comment based on the rule ...")
+                    report_comment = report_comment .. " [blcheck_ip_score: " .. tostring(blcheck_reputation_score)
+                            .. " [blcheck_domain: " .. blcheck_bl_domain .. " [blcheck_comment: " .. blcheck_comment
+                end
+
+                if is_maxiwall_enable_log_rule == true then
+                    logNotice("Notice, is_maxiwall_enable_log_rule is enable so populating the report comment based on the rule ...")
+                    report_comment = report_comment .. " [log_suspicious_score: " .. tostring(maxiwall_log_suspicious_score) .. "[mod_security_alert: " .. tostring(maxiwall_log_mod_security_alert)
+                end
+
+                if report_comment ~= nil or report_comment ~= "" then
+                    logNotice("Notice sending IP report to AIPDB web ...")
+                    aipdb_send_web_report(tostring(suspected_ip), tostring(suricata_suspicious_category), tostring(report_comment))
+                end
+            else
+                logNotice("Notice, AIPDB IP web report id not enabled. This IP will not be reported there")
+            end
+        elseif maxiwall_score_label == "unknown" then
             logNotice("Notice, this IP did not trigger any blocking rule and has unknown bad score")
             -- This means this IP is in non-critical report
         end
@@ -935,7 +977,7 @@ function log()
         report_count = report_count + 1;
     end
 
-    logNotice( "================== END OF LOG (" .. report_count .. ") =================\n\n")
+    logNotice("================== END OF LOG (" .. report_count .. ") =================\n\n")
 
 end
 

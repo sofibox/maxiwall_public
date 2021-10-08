@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==================================================
 _APP_SPECIFIC_NAME="Maxiwall"
-_APP_VERSION="0.1"
+_APP_VERSION="0.2"
 _APP_STATUS="beta"
 _APP_INFO="${_APP_SPECIFIC_NAME} (maxiwall) is bash script to manage CSF, AbuseIPDB and Suricata
 with extra features. This script is also a wrapper to manage suricata .lua report with IPS capability"
@@ -783,14 +783,15 @@ aipdb_report_ip_info() {
     fi
   fi
 
-  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
-
   # Sometimes target is not reachable or contains another domain (unresolvable), in this case we quit
   if [ -z "${ip}" ]; then
     [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, No DNS record found for target ${target}"
     echo "error-no-dns-record"
     exit 1
   fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
+
   touch "${AIPDB_IP_CACHE_REPORT_FILE}"
 
   # Remove AIPDB IP info cache start
@@ -914,14 +915,14 @@ aipdb_get_ip_info() {
     fi
   fi
 
-  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
-
   # Sometimes target is not reachable or contains another domain (unresolvable), in this case we quit
   if [ -z "${ip}" ]; then
     [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, No DNS record found for target ${target}"
     echo "error-no-dns-record"
     exit 1
   fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
 
   touch "${AIPDB_IP_CACHE_INFO_FILE}"
 
@@ -1231,7 +1232,7 @@ cmd() {
     target="$1"
     aipdb_get_ip_info "${target}"
 
-  # usage: maxiwall cmd aipdb-report-ip-info <target/ip>
+  # usage: maxiwall cmd aipdb-report-ip-info <target/ip> <category> <report_comment>
   # also works with domain, IPv6 and netmask
   elif [[ "${action}" == "aipdb-report-ip-info" || "${action}" == "aipdb-report-ip" || "${action}" == "report-aipdb-ip" || "${action}" == "arii" ]]; then
     local target report_category report_comment
@@ -1534,14 +1535,14 @@ cmd() {
       fi
     fi
 
-    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
-
     # Sometimes target is not reachable or contains another domain (unresolvable), in this case we quit
     if [ -z "${ip}" ]; then
       [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, No DNS record found for target ${target}"
       echo "error-no-dns-record"
       exit 1
     fi
+
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
 
     # This will check if the existing IP has been blocked before (works with IPv6 and IPv4)
     csf_ip_previous_block_status=$(csf -g "${ip}" | grep -E 'IPSET: Set:chain_DENY Match:|IPSET: Set:chain_6_DENY Match:')
@@ -1566,6 +1567,73 @@ cmd() {
         exit 1
       fi
     fi
+    # Usage: maxiwall cmd remove-target <ip/domain> <comment>
+  elif [[ "${action}" == "remove-target" || "${action}" == "remove-ip" || "${action}" == "unblock-ip" || "${action}" == "unblock-target" ]]; then
+    # Note CSF will always use compressed IPv6 address in csf.deny even if we pass full uncompressed IP
+    local ip target csf_ip_previous_block_status csf_ip_remove_status csf_success_remove_status
+    shift
+    target="$1"
+
+    if ipcalc -4 -sc "${target}" || ipcalc -6 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4 or IPv6"
+      ip="${target}"
+    else
+      # Target might be domain so use this to resolve to IP
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is not IPv4 nor IPv6 (Resolving to IP)"
+      ip=$(dig +short -t "a" +time=3 +tries=2 "${target}" | grep -om 1 "${REGEX_IPV4}")
+      # CSF only store uncompressed IP (so better change this and we can easily grep this)
+      if [ -z "${ip}" ]; then
+        ip=$(dig +short -t "aaaa" +time=3 +tries=2 "${target}" | grep -om 1 "${REGEX_IPV6}")
+      fi
+    fi
+
+    # Sometimes target is not reachable or contains another domain (unresolvable), in this case we quit
+    if [ -n "${ip}" ]; then
+      ip=$(ipcalc -s "${ip}" | awk '/Address:/{ print $NF }')
+    else
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, No DNS record found for target ${target}"
+      echo "error-no-dns-record"
+      exit 1
+    fi
+
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
+
+    # This will check if the existing IP has been blocked before (works with IPv6 and IPv4)
+    csf_ip_previous_block_status=$(csf -g "${ip}" | grep -E 'IPSET: Set:chain_DENY Match:|IPSET: Set:chain_6_DENY Match:')
+
+    # If string found, means already blocked
+    if [ -n "${csf_ip_previous_block_status}" ]; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Notice, IP ${ip} was blocked. Removing ..."
+      local search_csf_ip_without_comment
+
+      search_csf_ip_without_comment=$(grep -w "^${ip}" "${CSF_IP_PERMANENT_BLOCK_FILE}" | sed 's/[[:space:]]*#.*//;/^[[:space:]]*$/d')
+      [[ "${VERBOSE}" == "true" ]] && echo "search_csf_ip_without_comment is: ${search_csf_ip_without_comment}"
+      if [[ -n "${search_csf_ip_without_comment}" ]]; then
+        grep -wv "^${ip}" "${CSF_IP_PERMANENT_BLOCK_FILE}" >"${CSF_IP_PERMANENT_BLOCK_FILE}.write.tmp" && mv "${CSF_IP_PERMANENT_BLOCK_FILE}.write.tmp" "${CSF_IP_PERMANENT_BLOCK_FILE}"
+        retval=$?
+        if [ "${retval}" -eq 0 ]; then
+          # It is ok if this has error in csf because we already remove the IP
+          [[ "${VERBOSE}" == "true" ]] && echo "Ok, IP has been removed successfully using grep command. Restarting CSF and LFD ..."
+          csf -ra >/dev/null
+          echo "ok-ip-remove-success-using-grep"
+        else
+          [[ "${VERBOSE}" == "true" ]] && echo "Error, IP removed failed"
+
+          echo "error-ip-remove-failed-using-grep"
+        fi
+      else
+        [[ "${VERBOSE}" == "true" ]] && echo "Error, IP not found in CSF using grep command"
+        echo "ip-not-found-using-grep"
+      fi
+
+    else
+
+      [[ "${VERBOSE}" == "true" ]] && echo "Notice, IP ${ip} was not blocked"
+      echo "ip-was-not-blocked"
+      exit 1
+
+    fi
+
   else
     [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid action ${action} supplied"
     echo "error-invalid-action"
