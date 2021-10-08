@@ -1,0 +1,26 @@
+# For suricata 6.0.1
+# Debug level ---> -v: INFO | -vv: INFO+PERF | -vvv: INFO+PERF+CONFIG | -vvvv: INFO+PERF+CONFIG+DEBUG
+# D - means in daemon | -c read config | --pidfile <file> write pidfile on a file
+
+[Unit]
+Description=Suricata IDS/IDP daemon
+After=network.target network-online.target
+Requires=network-online.target
+Documentation=man:suricata(8) man:suricatasc(8)
+Documentation=https://suricata-ids.org/docs/
+
+[Service]
+Type=forking
+#Environment=LD_PRELOAD=/usr/lib/libtcmalloc_minimal.so.4
+PIDFile=/run/suricata.pid
+ExecStart=/usr/bin/suricata -vvv -D --af-packet -c /etc/suricata/suricata.yaml --pidfile /run/suricata.pid
+ExecReload=/usr/bin/suricatasc -c reload-rules ; /bin/kill -HUP $MAINPID
+ExecStop=/usr/bin/suricatasc -c shutdown
+Restart=on-failure
+#ProtectSystem=full
+#ProtectHome=true
+# This is needed to read and write all files inside maxicode
+#ReadWritePaths=/usr/local/
+
+[Install]
+WantedBy=multi-user.target
