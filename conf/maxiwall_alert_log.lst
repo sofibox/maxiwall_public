@@ -1,0 +1,22 @@
+/etc/csf/csf.deny CSF PERMANENT IP BAN LOCATION - BLOCKED BY CSF
+/var/lib/csf/csf.tempip CSF TEMPORARY IP BAN LOCATION
+/var/lib/csf/csf.tempban CSF TEMPORARY IP BAN LOCATION 2 - MOSTLY BY DA
+/var/log/lfd.log LFD LOG FILE (Login Failed Daemon log)
+/root/blocked_ips.txt DIRECTADMIN BLOCKED IP LOCATION
+/var/log/messages GENERAL SYSTEM MESSAGE LOG
+/var/log/secure GENERAL SYSTEM SECURE LOG
+/var/log/maillog GENERAL SYSTEM MAIL LOG
+/var/log/nginx/modsec_audit.log MOD_SECURITY AUDIT LOG
+/var/www/html/roundcube/logs/errors.log ROUNDCUBE ERROR LOG
+/var/www/html/phpMyAdmin/log/auth.log PHPMYADMIN AUTH LOG
+/var/log/httpd/access_log APACHE SERVER ACCESS LOG
+/var/log/httpd/error_log APACHER SERVER ERROR LOG
+/var/log/nginx/access_log NGINX SERVER ACCESS LOG
+/var/log/nginx/error_log NGINX SERVER ERROR LOG
+/var/log/exim/mainlog EXIM MAIL MAIN LOG
+/var/log/exim/rejectlog EXIM MAIL REJECT LOG
+/var/log/exim/paniclog EXIM MAIL PANIC LOG
+/var/log/directadmin/login.log DIRECTADMIN AUTH LOG
+/var/log/directadmin/security.log DIRECTADMIN SECURITY LOG
+/var/log/suricata/fast.log SURICATA FAST LOG
+/var/log/suricata/http.log SURICATA HTTP LOG
