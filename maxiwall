@@ -1,0 +1,2209 @@
+#!/bin/bash
+# ==================================================
+_APP_SPECIFIC_NAME="Maxiwall"
+_APP_VERSION="0.1"
+_APP_STATUS="beta"
+_APP_INFO="${_APP_SPECIFIC_NAME} (maxiwall) is bash script to manage CSF, AbuseIPDB and Suricata
+with extra features. This script is also a wrapper to manage suricata .lua report with IPS capability"
+_APP_VERSION_STATUS="${_APP_VERSION}-${_APP_STATUS}"
+_AUTHOR="Author: Arafat Ali | Email: arafat@sofibox.com | (C) 2019-2021"
+# ====================================================
+
+# This script works best with suricata + maxiwall.lua at code/lua-output/maxiwall.lua
+
+usage() {
+  local usage_file
+  usage_file="${SCRIPT_PATH}/readme.txt"
+  if [ -f "${usage_file}" ]; then
+    cat "${SCRIPT_PATH}/readme.txt"
+    echo ""
+  else
+    echo "[${SCRIPT_NAME}]: Error, the usage file ${usage_file} does not exist."
+    exit 1
+  fi
+}
+
+check_status() {
+  local retval
+  retval="$1"
+  if [[ "${retval}" -eq 0 ]]; then
+    echo " [ OK ]"
+  else
+    echo " [ FAILED ]"
+    exit 1
+  fi
+}
+
+msg() {
+  local mode="$1"
+  shift
+  # Set the foreground colour using ANSI escape
+  # If first argument is color then use mode as color
+  # Enable all cases matching for the following regular expression
+  #shopt -s nocasematch
+  if [[ "${mode^^}" == +(BLACK|RED|GREEN|YELLOW|BLUE|MAGENTA|CYAN) ]]; then
+    if ! [[ ${mode} =~ ^[0-9]$ ]]; then
+      case $(echo "${mode}" | tr '[:upper:]' '[:lower:]') in
+      black) mode=0 ;;
+      red) mode=1 ;;
+      green) mode=2 ;;
+      yellow) mode=3 ;;
+      blue) mode=4 ;;
+      magenta) mode=5 ;;
+      cyan) mode=6 ;;
+      end)
+        tput sgr0
+        return 0
+        ;;
+      white | *) mode=7 ;; # white or invalid color
+      esac
+    fi
+    tput setaf ${mode}
+    # Turn off all cases matching
+    #shopt -u nocasematch
+  elif [[ "${mode}" == "newline" || "${mode}" == "line" ]]; then
+    local count=$1 str=""
+    if [[ -z "${count}" || "${count}" -eq 0 || "${count}" -eq 1 ]]; then
+      return 0
+    fi
+    for ((i = 1; i <= count - 1; i++)); do
+      str="${str}\n"
+    done
+    if [ "$$" -eq "${BASHPID}" ]; then
+      for ((i = 1; i <= count - 2; i++)); do
+        str="${str}\n"
+      done
+      echo -e "${str}"
+    else
+      for ((i = 1; i <= count - 1; i++)); do
+        str="${str}\n"
+      done
+      # Using -e option here will not work if call inside string such as echo.
+      echo "${str}"
+    fi
+  elif [[ "${mode}" == "newtab" || "${mode}" == "tab" ]]; then
+    local count=$1 str=""
+    if [[ -z "${count}" || "${count}" -eq 0 || "${count}" -eq 1 ]]; then
+      return 0
+    fi
+
+    if [ "$$" -eq "${BASHPID}" ]; then
+      for ((i = 1; i <= count - 2; i++)); do
+        str="${str}\t"
+      done
+      echo -e "${str}"
+    else
+      for ((i = 1; i <= count - 1; i++)); do
+        str="${str}\t"
+      done
+      # Using -e option here will not work if call inside string such as echo.
+      echo "${str}"
+    fi
+  elif [[ "${mode}" == "-c" || "${mode}" == "-f" || "${mode}" == "--color" || "${mode}" == "--foreground" ]]; then
+    local color=$1
+    if ! [[ $color =~ ^[0-9]$ ]]; then
+      case $(echo "${color}" | tr '[:upper:]' '[:lower:]') in
+      black) color=0 ;;
+      red) color=1 ;;
+      green) color=2 ;;
+      yellow) color=3 ;;
+      blue) color=4 ;;
+      magenta) color=5 ;;
+      cyan) color=6 ;;
+      end)
+        tput sgr0
+        return 0
+        ;;
+      white | *) color=7 ;; # white or invalid color
+      esac
+    fi
+    tput setaf ${color}
+  # Set the background colour using ANSI escape
+  elif [[ "${mode}" == "-b" || "${mode}" == "--background" ]]; then
+    local color=$1
+    if ! [[ $color =~ ^[0-9]$ ]]; then
+
+      case $(echo "${color}" | tr '[:upper:]' '[:lower:]') in
+      black) color=0 ;;
+      red) color=1 ;;
+      green) color=2 ;;
+      yellow) color=3 ;;
+      blue) color=4 ;;
+      magenta) color=5 ;;
+      cyan) color=6 ;;
+      end)
+        tput sgr0
+        return 0
+        ;;
+      white | *) color=7 ;; # white or invalid color
+      esac
+    fi
+    tput setab ${color}
+
+  elif [[ ${mode} == +(bold|dim|invi|blink|reverse|uline|underline|xuline|focus|standout|xfocus|bell|alert|clr|end) ]]; then
+    case $(echo "${mode}" | tr '[:upper:]' '[:lower:]') in
+    bold) mode="bold" ;;
+    dim) mode="dim" ;;
+    invi) mode="invis" ;;
+    blink) mode="blink" ;;
+    reverse) mode="rev" ;;
+    uline | underline) mode="smul" ;;
+    xuline) mode="rmul" ;;
+    focus | standout) mode="smso" ;;
+    xfocus) mode="rmso" ;;
+    bell | alert) mode="bel" ;;
+    clr | end) mode="sgr0" ;;
+    *)
+      echo "[${SCRIPT_NAME}]: Error, invalid argument supplied for mode: ${mode}!"
+      exit 1
+      ;;
+    esac
+    tput "${mode}"
+    shopt -u nocasematch
+  # Note: Not all modes work for every terminal especially, bold, dim, invi, blink
+  elif [[ "${mode}" == "-m" || "${mode}" == "--mode" ]]; then
+    local mode=$1
+    case $(echo "${mode}" | tr '[:upper:]' '[:lower:]') in
+    bold) mode="bold" ;;
+    dim) mode="dim" ;;
+    invi) mode="invis" ;;
+    blink) mode="blink" ;;
+    reverse) mode="rev" ;;
+    uline | underline) mode="smul" ;;
+    xuline) mode="rmul" ;;
+    focus | standout) mode="smso" ;;
+    xfocus) mode="rmso" ;;
+    bell | alert) mode="bel" ;;
+    clr | end) mode="sgr0" ;;
+    *)
+      echo "[${SCRIPT_NAME}]: Error, invalid argument supplied for mode: ${mode}!"
+      exit 1
+      ;;
+    esac
+
+    tput "${mode}"
+  elif [[ "${mode}" == "-x" || "${mode}" == "x" || "${mode}" == "end" ]]; then
+    tput sgr0
+  fi
+}
+clear_database_cache() {
+  echo "[${SCRIPT_NAME}]: Clearing AIPDB info cache file ..."
+  cat /dev/null >"${AIPDB_IP_CACHE_INFO_FILE}"
+  check_status "$?"
+  echo "[${SCRIPT_NAME}]: Clearing AIPDB report cache file ..."
+  cat /dev/null >"${AIPDB_IP_CACHE_REPORT_FILE}"
+  check_status "$?"
+  echo "[${SCRIPT_NAME}]: Clearing BLCHECK cache file ..."
+  cat /dev/null >"${BLCHECK_CACHED_IP_FILE}"
+  check_status "$?"
+  echo "[${SCRIPT_NAME}]: Clearing maxiwall suspicious IP and cache files and ..."
+  cat /dev/null >"${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}"
+  rm -rf "${CACHE_PATH}/ips"
+  check_status "$?"
+
+}
+# This works with IPv4 and IPv6 with any valid form of CIDR subnet
+# ip_to_cidr 1.1.1.1 24
+ip_to_cidr() {
+  local ip target netmask retval
+  target="$1"
+  netmask="$2"
+
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+  elif ipcalc -6 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+  else
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is not valid IPv4 or IPv6"
+    echo "error-invalid-ip"
+    exit 1
+  fi
+
+  ip="${target}"
+  if [[ -z "${netmask}" ]]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, please provide netmask"
+    echo "error-netmask-is-empty"
+    exit 1
+  fi
+
+  ip_cidr=$(ipcalc --silent "${ip}/${netmask}" | awk '/^Network:/{ print $NF }' | tail -n 1)
+
+  retval="${PIPESTATUS[0]}"
+
+  if [ "${retval}" -eq 0 ]; then
+    echo "${ip_cidr}"
+  else
+    echo "error-invalid-result"
+  fi
+  exit "${retval}"
+}
+
+# netmask must be in this form /24
+count_input_ipv4_cidr24() {
+  local target netmask retval input_file cidr_24_ips_count
+  target="$1"
+  # File input (eg: csf.deny)
+  input_file="$2"
+  # First find the CIDR form of the IP
+  netmask="24"
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+    ip="${target}"
+  else
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IPv4 address"
+    echo "error-invalid-ipv4-address"
+    exit 1
+  fi
+
+  ip_cidr=$(ipcalc --silent "${ip}/${netmask}" | awk '/^Network:/{ print $NF }' | tail -n 1)
+
+  if [[ -z "${netmask}" ]]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, please provide netmask"
+    echo "error-netmask-is-empty"
+    exit 1
+  fi
+  if [[ ${netmask} -lt 0 || ${netmask} -gt 32 ]]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, IPv4 netmask must between range 0-32"
+    echo "error-invalid-ipv4-netmask-range"
+    exit 1
+  fi
+  [[ "${VERBOSE}" == "true" ]] && echo "Input file is: ${input_file}"
+  if [ ! -f "${input_file}" ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, input path does not exist"
+    echo "error-input-path-not-valid"
+    exit 1
+  fi
+
+  # Populate badips
+  # This will only get input that is not blankspace, comment and only an IPv4
+  bad_ips=$(awk '{ print $1 }' "${input_file}" | grep -v '^\s*$\|^\s*\#' | grepaddr -ipv4)
+
+  if [ -z "${bad_ips}" ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, the input does not contain IPv4 address"
+    echo "error-input-has-no-ipv4"
+    exit 1
+  fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "Bad IPs: "
+  [[ "${VERBOSE}" == "true" ]] && echo "${bad_ips}"
+  [[ "${VERBOSE}" == "true" ]] && echo ""
+
+  cidr_24_ips_file=$(mktemp)
+  echo "${bad_ips}" | while read -r line; do
+    oc1=$(echo "${line}" | cut -d '.' -f 1)
+    oc2=$(echo "${line}" | cut -d '.' -f 2)
+    oc3=$(echo "${line}" | cut -d '.' -f 3)
+    echo "${oc1}.${oc2}.${oc3}.0/24" >>"${cidr_24_ips_file}"
+  done
+
+  [[ "${VERBOSE}" == "true" ]] && echo "Bad IPs with /24: "
+  [[ "${VERBOSE}" == "true" ]] && cat "${cidr_24_ips_file}"
+  [[ "${VERBOSE}" == "true" ]] && echo ""
+
+  cidr_24_ips_count=$(awk '{ print $1 }' "${cidr_24_ips_file}" | sort | uniq -c | grep "${ip_cidr}" | awk '{ print $1 }')
+  if [ -z "${cidr_24_ips_count}" ]; then
+    echo "0"
+  else
+    echo "${cidr_24_ips_count}"
+  fi
+
+  rm -f "${cidr_24_ips_file}"
+
+}
+
+check_path() {
+  local paths
+  paths="$*"
+  for path in ${paths}; do
+    if [ -f "${path}" ]; then
+      :
+      # echo "[${SCRIPT_NAME}]: $(msg green)OK, the file path [ ${path} ] exists$(msg end)"
+    elif [ -d "${path}" ]; then
+      :
+      #echo "[${SCRIPT_NAME}]: $(msg green)OK, the directory path [ ${path} ] exists$(msg end)"
+    elif [ -L "${path}" ]; then
+      :
+      #echo "[${SCRIPT_NAME}]: $(msg green)OK, the symlink path [ ${path} ] exists$(msg end)"
+    elif [ -S "${path}" ]; then
+      :
+      #echo "[${SCRIPT_NAME}]: $(msg green)OK, the socket path [ ${path} ] exists$(msg end)"
+    else
+      echo "[${SCRIPT_NAME}]: $(msg red)[${SCRIPT_NAME}]: Error, the path [ ${path} ] does not exist!$(msg end)"
+      exit 1
+    fi
+  done
+}
+
+_pause() {
+  echo ""
+  local duration=$1
+  # If argument is not an integer, we disable read timeout
+  # TODO validate this statement again
+  if [[ ${duration} =~ ^[0-9]+$ ]]; then
+    read -t "${duration}" -r -s -n 1 -p "[${SCRIPT_NAME}]: Press any key or wait within ${duration} second(s) to continue or press (Ctrl+c) to cancel ..."
+  else
+    read -r -s -n 1 -p "[${SCRIPT_NAME}]: Terminal is paused! Press any key to continue or press (Ctrl+c) to cancel ..."
+  fi
+  echo ""
+}
+
+check_target() {
+  local target="$1"
+
+  echo "[${SCRIPT_NAME}]: Checking [${target}] information ..."
+
+}
+
+maxiwall_search_ip_log_cache() {
+  local target ip
+  target="$1"
+  field="$2"
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+    ip="${target}"
+  elif ipcalc -6 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+    ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target IPv6 is expanded to ${ip}"
+  else
+    # [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+    #echo "error-invalid-ip-address"
+    #exit 1
+    # Since we don't care if IP is valid or not, we assign IP=target, because we want to search
+    ip="${target}"
+  fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: IP is : ${ip}"
+
+  if [ -f "${CACHE_PATH}/ips/${ip}" ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "result: ${result}"
+    cat "${CACHE_PATH}/ips/${ip}"
+    return 0
+  else
+    echo "no-record"
+    return 1
+  fi
+}
+
+maxiwall_search_ip_log_variable() {
+
+  local target ip field result
+  target="$1"
+  field="$2"
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+    ip="${target}"
+  elif ipcalc -6 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+    ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target IPv6 is expanded to ${ip}"
+  else
+    # [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+    #echo "error-invalid-ip-address"
+    #exit 1
+    # Since we don't care if IP is valid or not, we assign IP=target, because we want to search
+    ip="${target}"
+  fi
+
+  if [ -z "${variable_field}" ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, please supply a variable field"
+    echo "error-variable-field-not-supplied"
+    exit 1
+  fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: IP is : ${ip}"
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Field is: ${field}"
+
+  result=$(grep -w "^\[target: ${ip}" "${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}" | awk -v fld="${field}" -f "${SEARCH_FIELD_AWK}" | tail -n 1)
+  [[ "${VERBOSE}" == "true" ]] && echo "result: ${result}"
+  if [ -n "${result}" ]; then
+    echo "${result}"
+    return 0
+  else
+    echo "no-record"
+    return 1
+  fi
+
+}
+
+# This is the scan log, it also has cache option and standalone ip cache file in cache/ips
+scan_log() {
+  # This has small bug but not important, where if the same IP came in multiple times and exceeded the output threshold, it will not limit the output.
+  # If different IP came, it will start limiting. Rarely happen, so it works most of the time
+  local ip target retval path_log_count suspicious_log_count \
+    attack_category mod_security_log_triggered alert_locs alert_info ip_data_temp
+  target="$1"
+  path_log_count=0
+  suspicious_log_count=0
+  total_log_count=0
+  attack_category="0"
+  mod_security_log_triggered="false"
+  ip_data_temp=$(mktemp)
+
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+    ip="${target//./\\.}"
+  elif ipcalc -6 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+    # No need to expand IP because we want to search the original form IPv6
+    ip="${target//:/\\:}"
+  else
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error IP is not valid IPv4 or IPv6"
+    echo "error-ip-not-valid"
+    exit 1
+  fi
+
+  # Make sure that the output file is limited to MAXIWALL_IP_LOG_ALERT_MAX_COUNT (delete the oldest record)
+
+  [[ "${VERBOSE}" == "true" ]] && echo "Notice, IP address string escaped as ${ip}"
+
+  alert_locs=$(grep -Ev '^[A-Za-z0-9_].+=.+$|^[[:space:]]*$|^#' "${MAXIWALL_ALERT_LOG_LIST}" | awk '{ print $1 }')
+  alert_info=$(grep -Ev '^[A-Za-z0-9_].+=.+$|^[[:space:]]*$|^#' "${MAXIWALL_ALERT_LOG_LIST}" | awk '{$1=""; $0=$0; $1=$1; print}')
+
+  # The total log count minus with the ignore logs (currently 2)
+  total_log_count=$(wc -l <"${MAXIWALL_ALERT_LOG_LIST}")
+  ((total_log_count = total_log_count - 2))
+
+  [[ "${VERBOSE}" == "true" ]] && echo "Using the following alert_locs: "
+  [[ "${VERBOSE}" == "true" ]] && echo "${alert_locs}"
+
+  while read -r alert_locs alert_info; do
+
+    if [ ! -s "${alert_locs}" ]; then
+      continue
+    fi
+    result=$(grep -E "(^|[^.0-9a-fA-F])${ip}([^.0-9a-fA^C]|$)" "${alert_locs}")
+    retval=$?
+    if [ ${retval} = 0 ]; then
+      # Calculate the path
+      ((path_log_count++))
+      # Apply condition which log should not counted as not suspicious
+      if [[ "${alert_locs}" == "/var/log/exim/mainlog" || "${alert_locs}" == "/var/log/suricata/fast.log" ]]; then
+        [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Log ${alert_locs} is not under suspicious or is ignored"
+
+      else
+
+        ((suspicious_log_count++))
+      fi
+
+      # Bruteforce attack condition from log file
+      if [[ "${alert_locs}" == "/var/log/messages" || "${alert_locs}" == "/var/log/secure" || "${alert_locs}" == "/var/log/maillog" || "${alert_locs}" == "/var/www/html/roundcube/logs/errors.log" || "${alert_locs}" == "/var/www/html/phpMyAdmin/log/auth.log" || "${alert_locs}" == "/var/log/exim/mainlog" || "${alert_locs}" == "//var/log/exim/rejectlog" || "${alert_locs}" == "/var/log/directadmin/login.log" ]]; then
+        # TODO get this string so that we can identify correct category not just assumption
+        # /var/log/secure ---> bruteforce attack | 'invalid user'
+        # /var/log/maillog" ---> bruteforce attack | 'pop3-login'   -- because i don't have pop3 enable-
+        # /var/www/html/roundcube/logs/errors.log ---> bruteforce attack | 'Login failed for'
+        # /var/www/html/phpMyAdmin/log/auth.log ---> confirmed bruteforce attack if triggered
+        # /var/log/exim/mainlog --> bruteforce attack | 'login authenticator failed'
+        # /var/log/exim/rejectlog --> bruteforce attack | 'rejected EHLO or HELO' | 'login authenticator failed'
+        # /var/log/directadmin/login.log ----> confirmed bruteforce attack fi triggered
+        if [ "${attack_category}" == "0" ]; then
+          attack_category="18"
+        else
+          attack_category="${attack_category} 18" # Bruteforce
+        fi
+      fi
+
+      # Web attack condition from log file
+      if [[ "${alert_locs}" == "/var/log/nginx/modsec_audit.log" || "${alert_locs}" == "/var/log/httpd/access_log" || "${alert_locs}" == "/var/log/httpd/error_log" || "${alert_locs}" == "/var/log/nginx/access_log" || "${alert_locs}" == "/var/log/nginx/error_log" || "${alert_locs}" == "/var/log/suricata/http.log" ]]; then
+        # /var/log/nginx/modsec_audit.log --> Confirm web application attack if triggered
+        # /var/log/httpd/access_log --> Confirm web application attack if triggered
+        # /var/log/httpd/error_log --> web application attack | 'Permission denied'
+        # /var/log/nginx/access_log --> confirm web application attack if triggered
+        # /var/log/nginx/error_log --> web application attack | 'ModSecurity' or 'wp-login.php'
+        # /var/log/suricata/http.log --> web application attack | 'author' | 'wp-login' | 'xmlrpc' | 'wp-admin'
+        if [[ "${alert_locs}" == "/var/log/nginx/modsec_audit.log" || "${alert_locs}" == *"/var/log/httpd/domains/"* || "${alert_locs}" == *"/var/log/nginx/domains/"* ]]; then
+          mod_security_log_triggered="true"
+        fi
+        if [ "${attack_category}" == "0" ]; then
+          attack_category="21"
+
+        else
+          attack_category="${attack_category} 21" # Web application attack
+        fi
+
+      fi
+      # Email spam attack
+      if [ "${alert_locs}" == "/var/log/exim/rejectlog" ]; then
+        # /var/log/exim/rejectlog --> mail Spam | 'Email blocked' |  'sender verify fail'
+        if [ "${attack_category}" == "0" ]; then
+          attack_category="11"
+
+        else
+          attack_category="${attack_category} 11" # Email Spam
+        fi
+      fi
+
+      if [[ "${VERBOSE}" == "true" ]]; then
+        {
+          echo "${path_log_count}) ${alert_info}"
+          echo "[${SCRIPT_NAME}]: Found this IP ${target} at: ${alert_locs}:"
+          echo "---------"
+          echo "[${SCRIPT_NAME}]: Latest 12 records:"
+          echo "---"
+          echo "${result}" | tail -n 12
+          echo "---------"
+          echo ""
+        } | tee -a "${ip_data_temp}"
+
+      else
+        {
+          echo "${path_log_count}) ${alert_info}"
+          echo "[${SCRIPT_NAME}]: Found this IP ${target} at: ${alert_locs}:"
+          echo "---------"
+          echo "[${SCRIPT_NAME}]: Latest 12 records:"
+          echo "---"
+          echo "${result}" | tail -n 12
+          echo "---------"
+          echo ""
+        } >>"${ip_data_temp}"
+      fi
+
+    else
+      :
+      # echo "Not found"
+    fi
+  done <"${MAXIWALL_ALERT_LOG_LIST}"
+
+  if [ "${suspicious_log_count}" -gt 0 ]; then
+
+    # Clear old record start
+    local total_output
+
+    total_output=$(wc -l <"${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}")
+
+    [[ "${VERBOSE}" == "true" ]] && echo "Total output scan: ${total_output}"
+    [[ "${VERBOSE}" == "true" ]] && echo "MAXIWALL_IP_LOG_ALERT_MAX_COUNT: ${MAXIWALL_IP_LOG_ALERT_MAX_COUNT}"
+    if [[ "${total_output}" -ge ${MAXIWALL_IP_LOG_ALERT_MAX_COUNT} ]]; then
+      ((exceed_count = total_output - MAXIWALL_IP_LOG_ALERT_MAX_COUNT))
+      echo "exceed is ${exceed_count}"
+      # Remove the ip file
+      # $2 = IP field / target field
+      # Use head -n to select the top row
+      ((exceed_count = exceed_count + 1))
+      readarray -t output_rows <<<"$(awk '{ print $2 }' "${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}" | head -n "${exceed_count}")"
+      # This is accurate but slow: (test latest which one is faster)
+      #output_rows=$(awk -v fld="ip" -f "${SEARCH_FIELD_AWK}" "${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}" | tail -n "${exceed_count}")
+      echo "output_rows exceeded to be deleted = ${output_rows[*]}"
+      for output_row in "${output_rows[@]}"; do
+
+        [[ "${VERBOSE}" == "true" ]] && echo "Notice, deleting IP ${output_row} from the output file ..."
+        grep -vw "^\[target: ${output_row}" "${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}" >"${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}.write.tmp" && mv "${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}.write.tmp" "${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}"
+        # check_status "$?" # Do not enable this, this will terminate
+        if [ -f "${CACHE_PATH}/ips/${output_row}" ]; then
+          echo "File exist removing ${output_row} [if exist] ..."
+          rm -f "${CACHE_PATH}/ips/${output_row}"
+          # check_status "$?" # Do not enable this, this will terminate
+
+        else
+          echo "File not exist ... skipped"
+        fi
+
+      done
+
+    fi
+
+    attack_category=$(echo "${attack_category}" | fmt -1 | sort | uniq | awk '{printf $1","}' | sed 's/,$//')
+    suspicious_score=$(echo "${suspicious_log_count} ${total_log_count}" | awk '{printf "%.2f", ($1/$2)*100}')
+    touch "${MAXIWALL_SUSPICIOUS_IP_PATH}/${target}"
+    cat "${ip_data_temp}" >"${MAXIWALL_SUSPICIOUS_IP_PATH}/${target}"
+    rm -f "${ip_data_temp}"
+
+    if [[ "${VERBOSE}" == "true" ]]; then
+      echo "Scan for target: "
+      echo "${target}"
+      echo "Total critical log count: "
+      echo "${total_log_count}"
+      echo "Suspicious log count: "
+      echo "${suspicious_log_count}"
+      echo "Suspicious score is: "
+      echo "${suspicious_score} %"
+      echo "Mod security alert: "
+      echo "${mod_security_log_triggered}"
+      echo "Attack category: "
+      echo "${attack_category}"
+    fi
+
+    touch "${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}"
+    echo "[target: ${target} [suspicious_count: ${suspicious_log_count} [suspicious_score: ${suspicious_score} [mod_security_alert: ${mod_security_log_triggered} [attack_category: ${attack_category} [comment: Category: abuseipdb.com/categories" >>"${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}"
+
+  else
+
+    echo "error-no-suspicious-log-found"
+
+  fi
+
+  exit "${suspicious_log_count}"
+}
+
+# maxiwall cmd aipdb_search_ip_variable <ip> <variable>
+aipdb_search_ip_variable() {
+  local target ip field result
+  target="$1"
+  field="$2"
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+    ip="${target}"
+  elif ipcalc -6 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+    ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target IPv6 is expanded to ${ip}"
+  else
+    # [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+    #echo "error-invalid-ip-address"
+    #exit 1
+    # Since we don't care if IP is valid or not, we assign IP=target, because we want to search
+    ip="${target}"
+  fi
+
+  if [ -z "${variable_field}" ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, please supply a variable field"
+    echo "error-variable-field-not-supplied"
+    exit 1
+  fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: IP is : ${ip}"
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Field is: ${field}"
+
+  result=$(grep -w "^\[ip: ${ip}" "${AIPDB_IP_CACHE_INFO_FILE}" | awk -v fld="${field}" -f "${SEARCH_FIELD_AWK}")
+  [[ "${VERBOSE}" == "true" ]] && echo "result: ${result}"
+  if [ -n "${result}" ]; then
+    # Found variable of $field for this specific IP
+    # Add space between domain
+    echo "${result}" # | awk -v OFS=", " '$1=$1'
+    return 0
+  else
+    # No variable of $field for this specific IP
+    echo "no-record"
+    return 1
+  fi
+
+}
+
+maxiwall_search_whitelist_ip_variable() {
+  local target ip field result
+  target="$1"
+  field="$2"
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+    ip="${target}"
+  elif ipcalc -6 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+    ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target IPv6 is expanded to ${ip}"
+  else
+    # [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+    #echo "error-invalid-ip-address"
+    #exit 1
+    # Since we don't care if IP is valid or not, we assign IP=target, because we want to search
+    ip="${target}"
+  fi
+
+  if [ -z "${variable_field}" ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, please supply a variable field"
+    echo "error-variable-field-not-supplied"
+    exit 1
+  fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: IP is : ${ip}"
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Field is: ${field}"
+
+  result=$(grep -w "^\[ip: ${ip}" "${MAXIWALL_WHITELISTED_IP_FILE}" | awk -v fld="${field}" -f "${SEARCH_FIELD_AWK}")
+  [[ "${VERBOSE}" == "true" ]] && echo "result: ${result}"
+  if [ -n "${result}" ]; then
+    echo "${result}" # | awk -v OFS=", " '$1=$1'
+    return 0
+  else
+    # No variable of $field for this specific IP
+    echo "no-record"
+    return 1
+  fi
+
+}
+
+blcheck_search_blacklist_ip_variable() {
+  local target ip field result
+  target="$1"
+  field="$2"
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+    ip="${target}"
+  elif ipcalc -6 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+    ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target IPv6 is expanded to ${ip}"
+  else
+    # [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+    #echo "error-invalid-ip-address"
+    #exit 1
+    # Since we don't care if IP is valid or not, we assign IP=target, because we want to search
+    ip="${target}"
+  fi
+
+  if [ -z "${variable_field}" ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, please supply a variable field"
+    echo "error-variable-field-not-supplied"
+    exit 1
+  fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: IP is : ${ip}"
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Field is: ${field}"
+
+  result=$(grep -w "^\[target: ${ip}" "${BLCHECK_CACHED_IP_FILE}" | awk -v fld="${field}" -f "${SEARCH_FIELD_AWK}")
+  [[ "${VERBOSE}" == "true" ]] && echo "result: ${result}"
+  if [ -n "${result}" ]; then
+    echo "${result}"
+    return 0
+  else
+    echo "no-record"
+    return 1
+  fi
+
+}
+# maxiwall cmd aipdb-report-ip-info <ip/target>
+aipdb_report_ip_info() {
+  local ip target retval report_category report_comment error_detail
+  target="$1"
+  report_category="$2"
+  report_comment="${*:3}"
+  #echo "Target: ${target}"
+  #echo "report_category: ${report_category}"
+  #echo "report_comment: ${report_comment}"
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+    ip="${target}"
+  elif ipcalc -6 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+    ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+  else
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is not IPv4 nor IPv6 (treating as DNS)"
+    ip=$(dig +short -t "a" +time=3 +tries=2 "${target}" | grep -om 1 "${REGEX_IPV4}")
+    if [ -z "${ip}" ]; then
+      ip=$(dig +short -t "aaaa" +time=3 +tries=2 "${target}" | grep -om 1 "${REGEX_IPV6}")
+      ip=$(ipcalc -s "${ip}" | awk '/Full Address:/{ print $NF }')
+    fi
+  fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
+
+  # Sometimes target is not reachable or contains another domain (unresolvable), in this case we quit
+  if [ -z "${ip}" ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, No DNS record found for target ${target}"
+    echo "error-no-dns-record"
+    exit 1
+  fi
+  touch "${AIPDB_IP_CACHE_REPORT_FILE}"
+
+  # Remove AIPDB IP info cache start
+  local aipdb_record_timestamps aipdb_cache_duration retval total_search_output
+  # We only scan 25 oldest records for each call to reduce performance
+  total_search_output=25
+
+  # Get the AIPDB IP cache info duration from setting (the data also in UTC)
+  aipdb_cache_duration=${AIPDB_IP_CACHE_REPORT_DURATION}
+  [[ "${VERBOSE}" == "true" ]] && echo "aipdb_cache_duration: ${aipdb_cache_duration}"
+
+  # Get the current timestamp in UTC format
+  current_timestamp=$(date -u +%s)
+  [[ "${VERBOSE}" == "true" ]] && echo "current_timestamp: ${current_timestamp}"
+
+  readarray -t aipdb_record_timestamps <<<"$(awk -v fld="time" -f "${SEARCH_FIELD_AWK}" "${AIPDB_IP_CACHE_REPORT_FILE}" | head -n "${total_search_output}")"
+
+  [[ "${VERBOSE}" == "true" ]] && echo "aipdb_record_timestamps: ${aipdb_record_timestamps[*]}"
+
+  # Only run below if AIPDB_IP_CACHE_REPORT_FILE is not empty
+  if [ -s "${AIPDB_IP_CACHE_REPORT_FILE}" ]; then
+    for aipdb_record_timestamp in "${aipdb_record_timestamps[@]}"; do
+      # Calculate timestamp differences
+      timestamp_different=$((current_timestamp - aipdb_record_timestamp))
+      [[ "${VERBOSE}" == "true" ]] && echo "Notice, the first record timestamp_different is: ${timestamp_different}"
+      if [ "${timestamp_different}" -ge "${aipdb_cache_duration}" ]; then
+
+        [[ "${VERBOSE}" == "true" ]] && echo "Notice, the first record has timestamp over ${aipdb_cache_duration} second(s). Removing the first record ..."
+        tail -n +2 "${AIPDB_IP_CACHE_REPORT_FILE}" >"${AIPDB_IP_CACHE_REPORT_FILE}.tmp" && mv "${AIPDB_IP_CACHE_REPORT_FILE}.tmp" "${AIPDB_IP_CACHE_REPORT_FILE}"
+        retval=$?
+
+        if [[ "${retval}" -eq 0 ]]; then
+          [[ "${VERBOSE}" == "true" ]] && echo "Notice, first record with expired timestamp has been removed from $(basename "${AIPDB_IP_CACHE_REPORT_FILE}")"
+        else
+          [[ "${VERBOSE}" == "true" ]] && echo "Error, when trying to remove first record with expired timestamp from $(basename "${AIPDB_IP_CACHE_REPORT_FILE}")"
+        fi
+
+      else
+        [[ "${VERBOSE}" == "true" ]] && echo "[Skipped]: The first record timestamp is not over ${aipdb_cache_duration} second(s)"
+      fi
+    done
+  else
+    [[ "${VERBOSE}" == "true" ]] && echo "[Skipped]: AIPDB_IP_CACHE_REPORT_FILE file is empty"
+  fi
+  # End of cache remove
+
+  grep -wq "^\[ip: ${ip}" "${AIPDB_IP_CACHE_REPORT_FILE}"
+  retval=$?
+  if [ "${retval}" -eq 1 ]; then
+
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Notice, this target with IP ${ip} has not been cache into AIPDB web report"
+
+    # This will only check the API site link is down or not like server error (it will not check proper end point)
+    # This will check AIPDB_REPORT_URL
+    if [ "$(curl -LI "${AIPDB_REPORT_URL}" -o /dev/null -w '%{http_code}\n' -s)" == "200" ]; then
+      local api_exec
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: OK, API server link is online with http status code 200"
+
+      api_exec=$(
+        curl -s "${AIPDB_REPORT_URL}" \
+          --data-urlencode "ip=${ip}" \
+          -d categories="${report_category}" \
+          --data-urlencode "comment=${report_comment}" \
+          -H "Key: ${AIPDB_API_KEY}" \
+          -H "Accept: application/json"
+      )
+      retval=$?
+      if [ "${retval}" -ne 0 ]; then
+        # No need to display more details about curl, the code return is enough
+        [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Warning, found error in curl (${retval})"
+        echo "warning-curl-has-error"
+        exit 1
+      fi
+
+      # Only return the first collection of an error, don't care about others
+      error_detail=$(echo "${api_exec}" | jq -r 'first(.errors[]? | .detail)')
+
+      if [ -n "${error_detail}" ]; then
+
+        [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Warning, found error from AIPDB API"
+        [[ "${VERBOSE}" == "true" ]] && echo "error_detail:"
+        [[ "${VERBOSE}" == "true" ]] && echo "${error_detail}"
+        echo "warning-api-has-error"
+        exit 1
+      else
+        echo "[ip: ${ip} [target: ${target} [category: ${report_category} [time: $(date -u +%s) [comment: \"${report_comment}\"" >>"${AIPDB_IP_CACHE_REPORT_FILE}"
+        [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: OK, target with IP ${ip} has been reported successfully into AIPDB web."
+        echo "ok-ip-cache-success"
+
+        exit 0
+      fi
+    fi
+  else
+
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Notice, target with IP ${ip} is found in AIPDB cache report file. Please wait within ${AIPDB_IP_CACHE_REPORT_DURATION} seconds to report the same IP"
+    echo "notice-ip-already-cache"
+    exit 1
+
+  fi
+
+}
+
+# List of error messages: error-no-dns-record
+aipdb_get_ip_info() {
+  local ip target retval
+  target="$1"
+  # echo "Target: ${target}"
+
+  if ipcalc -4 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+    ip="${target}"
+  elif ipcalc -6 -sc "${target}"; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+    ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+  else
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is not IPv4 nor IPv6 (treating as DNS)"
+    ip=$(dig +short -t "a" +time=3 +tries=2 "${target}" | grep -om 1 "${REGEX_IPV4}")
+    if [ -z "${ip}" ]; then
+      ip=$(dig +short -t "aaaa" +time=3 +tries=2 "${target}" | grep -om 1 "${REGEX_IPV6}")
+      ip=$(ipcalc -s "${ip}" | awk '/Full Address:/{ print $NF }')
+    fi
+  fi
+
+  [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
+
+  # Sometimes target is not reachable or contains another domain (unresolvable), in this case we quit
+  if [ -z "${ip}" ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, No DNS record found for target ${target}"
+    echo "error-no-dns-record"
+    exit 1
+  fi
+
+  touch "${AIPDB_IP_CACHE_INFO_FILE}"
+
+  # Remove AIPDB IP info cache start
+  local aipdb_record_timestamps aipdb_cache_duration retval total_search_output
+  # We only scan 25 oldest records for each call to reduce performance
+  total_search_output=25
+
+  # Get the AIPDB IP cache info duration from setting (the data also in UTC)
+  aipdb_cache_duration=${AIPDB_IP_CACHE_INFO_DURATION}
+  [[ "${VERBOSE}" == "true" ]] && echo "aipdb_cache_duration: ${aipdb_cache_duration}"
+
+  # Get the current timestamp in UTC format
+  current_timestamp=$(date -u +%s)
+  [[ "${VERBOSE}" == "true" ]] && echo "current_timestamp: ${current_timestamp}"
+
+  readarray -t aipdb_record_timestamps <<<"$(awk -v fld="time" -f "${SEARCH_FIELD_AWK}" "${AIPDB_IP_CACHE_INFO_FILE}" | head -n "${total_search_output}")"
+
+  [[ "${VERBOSE}" == "true" ]] && echo "aipdb_record_timestamps: ${aipdb_record_timestamps[*]}"
+
+  # Only run below if AIPDB_IP_CACHE_INFO_FILE is not empty
+  if [ -s "${AIPDB_IP_CACHE_INFO_FILE}" ]; then
+    for aipdb_record_timestamp in "${aipdb_record_timestamps[@]}"; do
+      # Calculate timestamp differences
+      timestamp_different=$((current_timestamp - aipdb_record_timestamp))
+      [[ "${VERBOSE}" == "true" ]] && echo "Notice, the first record timestamp_different is: ${timestamp_different}"
+      if [ "${timestamp_different}" -ge "${aipdb_cache_duration}" ]; then
+
+        [[ "${VERBOSE}" == "true" ]] && echo "Notice, the first record has timestamp over ${aipdb_cache_duration} second(s). Removing the first record ..."
+        tail -n +2 "${AIPDB_IP_CACHE_INFO_FILE}" >"${AIPDB_IP_CACHE_INFO_FILE}.tmp" && mv "${AIPDB_IP_CACHE_INFO_FILE}.tmp" "${AIPDB_IP_CACHE_INFO_FILE}"
+        retval=$?
+
+        if [[ "${retval}" -eq 0 ]]; then
+          [[ "${VERBOSE}" == "true" ]] && echo "Notice, first record with expired timestamp has been removed from $(basename "${AIPDB_IP_CACHE_INFO_FILE}")"
+        else
+          [[ "${VERBOSE}" == "true" ]] && echo "Error, when trying to remove first record with expired timestamp from $(basename "${AIPDB_IP_CACHE_INFO_FILE}")"
+        fi
+
+      else
+        [[ "${VERBOSE}" == "true" ]] && echo "[Skipped]: The first record timestamp is not over ${aipdb_cache_duration} second(s)"
+      fi
+    done
+  else
+    [[ "${VERBOSE}" == "true" ]] && echo "[Skipped]: AIPDB_IP_CACHE_INFO_FILE file is empty"
+  fi
+  # End of cache remove
+
+  # OLD method that might have bug if IP is in comment
+  #grep -qE "(^|[^.0-9a-fA-F])${ip//./\\.}([^.0-9a-fA^C]|$)" "${AIPDB_IP_CACHE_INFO_FILE}"
+  # New method:
+  grep -wq "^\[ip: ${ip}" "${AIPDB_IP_CACHE_INFO_FILE}"
+  retval=$?
+  if [ "${retval}" -eq 1 ]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Notice, this target with IP ${ip} has not been cached into AIPDB file"
+    # This will only check the API site link is down or not like server error (it will not check proper end point)
+    # This will check AIPDB_CHECK_URL
+    if [ "$(curl -LI "${AIPDB_CHECK_URL}" -o /dev/null -w '%{http_code}\n' -s)" == "200" ]; then
+      local api_exec
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: OK, API server link is online with http status code 200"
+      api_exec=$(curl -sG "${AIPDB_CHECK_URL}" --data-urlencode "ipAddress=${ip}" \
+        -d "maxAgeInDays=90" -d "verbose" \
+        -H "Key: ${AIPDB_API_KEY}" -H "Accept: application/json" | jq -r '.')
+
+      retval=$?
+      if [ "${retval}" -ne 0 ]; then
+        # No need to display more details about curl, the code return is enough
+        [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Warning, found error in curl (${retval})"
+        echo "warning-curl-has-error"
+        exit 1
+      fi
+
+      [[ "${VERBOSE}" == "true" ]] && echo "==========================================================="
+      [[ "${VERBOSE}" == "true" ]] && echo "API json raw data"
+      [[ "${VERBOSE}" == "true" ]] && echo "-----------------------------------------------------------"
+      [[ "${VERBOSE}" == "true" ]] && echo "${api_exec}"
+      [[ "${VERBOSE}" == "true" ]] && echo ""
+
+      # Get the error collection details if exist
+      error_detail=$(echo "${api_exec}" | jq -r 'first(.errors[]? | .detail)')
+
+      if [ -n "${error_detail}" ]; then
+        [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Warning, found error from AIPDB API"
+        [[ "${VERBOSE}" == "true" ]] && echo "error_detail:"
+        [[ "${VERBOSE}" == "true" ]] && echo "${error_detail}"
+        echo "warning-api-has-error"
+        exit 1
+      else
+        ip_address=$(echo "${api_exec}" | jq -r '.data.ipAddress')
+        is_whitelisted=$(echo "${api_exec}" | jq -r '.data.isWhitelisted')
+        abuse_confidence_score=$(echo "${api_exec}" | jq -r '.data.abuseConfidenceScore')
+        isp=$(echo "${api_exec}" | jq -r '.data.isp')
+        usage_type=$(echo "${api_exec}" | jq -r '.data.usageType')
+        domain=$(echo "${api_exec}" | jq -r '.data.domain')
+        country_name=$(echo "${api_exec}" | jq -r '.data.countryName')
+        country_code=$(echo "${api_exec}" | jq -r '.data.countryCode')
+        total_report=$(echo "${api_exec}" | jq -r '.data.totalReports')
+        num_distinct_user=$(echo "${api_exec}" | jq -r '.data.numDistinctUsers')
+        last_reported_at=$(echo "${api_exec}" | jq -r '.data.lastReportedAt')
+
+        [[ "${VERBOSE}" == "true" ]] && echo "==========================================================="
+        [[ "${VERBOSE}" == "true" ]] && echo "RAW data"
+        [[ "${VERBOSE}" == "true" ]] && echo "-----------------------------------------------------------"
+        [[ "${VERBOSE}" == "true" ]] && echo "ip_address ${ip_address}"
+        [[ "${VERBOSE}" == "true" ]] && echo "is_whitelisted ${is_whitelisted}"
+        [[ "${VERBOSE}" == "true" ]] && echo "abuse_confidence_score ${abuse_confidence_score}"
+        [[ "${VERBOSE}" == "true" ]] && echo "isp ${isp}"
+        [[ "${VERBOSE}" == "true" ]] && echo "usage_type ${usage_type}"
+        [[ "${VERBOSE}" == "true" ]] && echo "domain ${domain}"
+        [[ "${VERBOSE}" == "true" ]] && echo "country_name ${country_name}"
+        [[ "${VERBOSE}" == "true" ]] && echo "country_code ${country_code}"
+        [[ "${VERBOSE}" == "true" ]] && echo "total_report ${total_report}"
+        [[ "${VERBOSE}" == "true" ]] && echo "num_distinct_user ${num_distinct_user}"
+        [[ "${VERBOSE}" == "true" ]] && echo "last_reported_at ${last_reported_at}"
+        [[ "${VERBOSE}" == "true" ]] && echo ""
+        # Check if the string returned from the API is null if yes set default value for it
+
+        if [[ -z "${ip_address}" || "${ip_address}" == "" || "${ip_address}" == "null" ]]; then
+          ip_address="${target}"
+        fi
+
+        if [[ -z "${is_whitelisted}" || "${is_whitelisted}" == "" || "${is_whitelisted}" == "null" ]]; then
+          is_whitelisted="unknown"
+        fi
+
+        if [[ -z "${abuse_confidence_score}" || "${abuse_confidence_score}" == "" || "${abuse_confidence_score}" == "null" ]]; then
+          abuse_confidence_score="0"
+        fi
+        if [[ -z "${isp}" || "${isp}" == "" || "${isp}" == "null" ]]; then
+          isp="unknown"
+        fi
+
+        if [[ -z "${usage_type}" || "${usage_type}" == "" || "${usage_type}" == "null" ]]; then
+          usage_type="unknown"
+        fi
+
+        if [[ -z "${domain}" || "${domain}" == "" || "${domain}" == "null" ]]; then
+          domain="unknown"
+        fi
+
+        if [[ -z "${country_name}" || "${country_name}" == "" || "${country_name}" == "null" ]]; then
+          country_name="unknown"
+        fi
+
+        if [[ -z "${country_code}" || "${country_code}" == "" || "${country_code}" == "null" ]]; then
+          country_code="unknown"
+        fi
+
+        if [[ -z "${total_report}" || "${total_report}" == "" || "${total_report}" == "null" ]]; then
+          total_report="0"
+        fi
+
+        if [[ -z "${num_distinct_user}" || "${num_distinct_user}" == "" || "${num_distinct_user}" == "null" ]]; then
+          num_distinct_user="0"
+        fi
+
+        if [[ -z "${last_reported_at}" || "${last_reported_at}" == "" || "${last_reported_at}" == "null" ]]; then
+          last_reported_at="unknown"
+        fi
+
+        [[ "${VERBOSE}" == "true" ]] && echo "==========================================================="
+        [[ "${VERBOSE}" == "true" ]] && echo "New data for report"
+        [[ "${VERBOSE}" == "true" ]] && echo "-----------------------------------------------------------"
+        [[ "${VERBOSE}" == "true" ]] && echo "ip_address ${ip_address}"
+        [[ "${VERBOSE}" == "true" ]] && echo "is_whitelisted ${is_whitelisted}"
+        [[ "${VERBOSE}" == "true" ]] && echo "abuse_confidence_score ${abuse_confidence_score}"
+        [[ "${VERBOSE}" == "true" ]] && echo "isp ${isp}"
+        [[ "${VERBOSE}" == "true" ]] && echo "usage_type ${usage_type}"
+        [[ "${VERBOSE}" == "true" ]] && echo "domain ${domain}"
+        [[ "${VERBOSE}" == "true" ]] && echo "country_name ${country_name}"
+        [[ "${VERBOSE}" == "true" ]] && echo "country_code ${country_code}"
+        [[ "${VERBOSE}" == "true" ]] && echo "total_report ${total_report}"
+        [[ "${VERBOSE}" == "true" ]] && echo "num_distinct_user ${num_distinct_user}"
+        [[ "${VERBOSE}" == "true" ]] && echo "last_reported_at ${last_reported_at}"
+        [[ "${VERBOSE}" == "true" ]] && echo ""
+
+        # Store in cache because no error found
+        echo -e "[ip: ${ip_address} [target: ${target} [time: $(date -u +%s) [is_whitelisted: ${is_whitelisted} [abuse_score: ${abuse_confidence_score}" \
+          "[isp: ${isp} [usage_type: ${usage_type} [domain: ${domain} [country_name: ${country_name} [country_code: ${country_code} [total_report: ${total_report}" \
+          "[distinct_report: ${num_distinct_user} [last_report: ${last_reported_at}" >>"${AIPDB_IP_CACHE_INFO_FILE}"
+        retval=$?
+        if [ ${retval} -eq 0 ]; then
+          [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: OK, IP address ${ip_address} has been cached successfully in $(basename "${AIPDB_IP_CACHE_INFO_FILE}") file"
+          echo "ok-ip-cache-success"
+          exit 0
+        else
+
+          [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Warning, found error when performing cache in file"
+          echo "warning-could-not-write-cache-ip"
+          exit 1
+        fi
+      fi
+    else
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, the web server API CHECK is down"
+      echo "error-api-check-is-down"
+      exit 1
+    fi
+  else
+    # Note target can have different IP when using domain.com, a google.com can be cached multiple times with different IP resolved.
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Notice, target with IP ${ip} is found in AIPDB cache info file. Please wait within ${AIPDB_IP_CACHE_INFO_DURATION} seconds to obtain new IP data"
+    echo "notice-ip-already-cache"
+    exit 1
+    # Already cached then what to do ?
+  fi
+
+}
+
+cmd() {
+  local action retval
+  shift
+
+  action="$1"
+  if [[ "${action}" == "get-config-version" ]]; then
+    echo "${CONFIG_VERSION}"
+  elif [[ "${action}" == "get-enable-log" ]]; then
+    echo "${ENABLE_LOG}"
+  elif [[ "${action}" == "get-maxiwall-enable-script-log" ]]; then
+    echo "${MAXIWALL_ENABLE_SCRIPT_LOG}"
+  elif [[ "${action}" == "get-suricata-enable-script-log" ]]; then
+    echo "${SURICATA_ENABLE_SCRIPT_LOG}"
+  elif [[ "${action}" == "get-maxiwall-report-email" ]]; then
+    echo "${MAXIWALL_REPORT_EMAIL}"
+  elif [[ "${action}" == "get-maxiwall-enable-auto-action" ]]; then
+    echo "${MAXIWALL_ENABLE_AUTO_ACTION}"
+  elif [[ "${action}" == "get-maxiwall-enable-mail-report" ]]; then
+    echo "${MAXIWALL_ENABLE_MAIL_REPORT}"
+  elif [[ "${action}" == "get-enable-gotify-report" ]]; then
+    echo "${ENABLE_GOTIFY_REPORT}"
+  elif [[ "${action}" == "get-maxiwall-enable-mail-error-report" ]]; then
+    echo "${MAXIWALL_ENABLE_MAIL_ERROR_REPORT}"
+  elif [[ "${action}" == "get-maxiwall-lua-alert-max-count" ]]; then
+    echo "${MAXIWALL_LUA_ALERT_MAX_COUNT}"
+  elif [[ "${action}" == "get-maxiwall-ip-log-alert-max-count" ]]; then
+    echo "${MAXIWALL_IP_LOG_ALERT_MAX_COUNT}"
+  elif [[ "${action}" == "get-maxiwall-ip-alert-sleep-duration" ]]; then
+    echo "${MAXIWALL_IP_ALERT_SLEEP_DURATION}"
+  elif [[ "${action}" == "get-maxiwall-limit-email-alert-report-rate" ]]; then
+    echo "${MAXIWALL_LIMIT_EMAIL_ALERT_REPORT_RATE}"
+  elif [[ "${action}" == "get-maxiwall-limit-email-error-report-rate" ]]; then
+    echo "${MAXIWALL_LIMIT_EMAIL_ERROR_REPORT_RATE}"
+  elif [[ "${action}" == "get-maxiwall-script-log-name" ]]; then
+    echo "${MAXIWALL_SCRIPT_LOG_NAME}"
+  elif [[ "${action}" == "get-maxiwall-alert-log-name" ]]; then
+    echo "${MAXIWALL_ALERT_LOG_NAME}"
+  elif [[ "${action}" == "get-maxiwall-mail-report-log-name" ]]; then
+    echo "${MAXIWALL_MAIL_REPORT_LOG_NAME}"
+  elif [[ "${action}" == "get-aipdb-enable-rule" ]]; then
+    echo "${AIPDB_ENABLE_RULE}"
+  elif [[ "${action}" == "get-aipdb-enable-ip-web-report" ]]; then
+    echo "${AIPDB_ENABLE_IP_WEB_REPORT}"
+  elif [[ "${action}" == "get-blcheck-enable-rule" ]]; then
+    echo "${BLCHECK_ENABLE_RULE}"
+  elif [[ "${action}" == "get-csf-enable-auto-block" ]]; then
+    echo "${CSF_ENABLE_AUTO_BLOCK}"
+  elif [[ "${action}" == "get-csf-enable-ip-web-report" ]]; then
+    echo "${CSF_ENABLE_IP_WEB_REPORT}"
+  elif [[ "${action}" == "get-csf-enable-ipv4-cidr-24-network-block" ]]; then
+    echo "${CSF_ENABLE_IPV4_CIDR_24_NETWORK_BLOCK}"
+    #elif [[ "${action}" == "get-enable-csf-ipv6-cidr-network-block" ]]; then
+    #  echo "${ENABLE_CSF_IPV6_CIDR_NETWORK_BLOCK}"
+  elif [[ "${action}" == "get-maxiwall-enable-log-rule" ]]; then
+    echo "${MAXIWALL_ENABLE_LOG_RULE}"
+  elif [[ "${action}" == "get-maxiwall-enable-whitelist-ip" ]]; then
+    echo "${MAXIWALL_ENABLE_WHITELIST_IP}"
+  elif [[ "${action}" == "get-maxiwall-enable-ignore-ip" ]]; then
+    echo "${MAXIWALL_ENABLE_IGNORE_IP}"
+  elif [[ "${action}" == "get-maxiwall-enable-suppress-ip" ]]; then
+    echo "${MAXIWALL_ENABLE_SUPPRESS_IP}"
+  elif [[ "${action}" == "get-maxiwall-enable-suppress-msg" ]]; then
+    echo "${MAXIWALL_ENABLE_SUPPRESS_MSG}"
+  elif [[ "${action}" == "get-aipdb-enable-cache" ]]; then
+    echo "${AIPDB_ENABLE_CACHE}"
+  elif [[ "${action}" == "get-aipdb-ip-cache-info-duration" ]]; then
+    echo "${AIPDB_IP_CACHE_INFO_DURATION}"
+  elif [[ "${action}" == "get-aipdb-ip-cache-report-duration" ]]; then
+    echo "${AIPDB_IP_CACHE_REPORT_DURATION}"
+  elif [[ "${action}" == "get-aipdb-check-url" ]]; then
+    echo "${AIPDB_CHECK_URL}"
+  elif [[ "${action}" == "get-aipdb-report-url" ]]; then
+    echo "${AIPDB_REPORT_URL}"
+  elif [[ "${action}" == "get-aipdb-api-key" ]]; then
+    echo "${AIPDB_API_KEY}"
+  elif [[ "${action}" == "get-hostname" ]]; then
+    hostname --fqdn
+  # usage: maxiwall cmd get-local-ipv4
+  elif [[ "${action}" == "get-local-ipv4" ]]; then
+    local ipv4
+    ipv4=$(curl -s https://api.ipify.org)
+    retval=$?
+    if [ "${retval}" -eq 0 ]; then
+      echo "${ipv4}"
+    fi
+  # usage: maxiwall cmd get-local-ipv6
+  elif [[ "${action}" == "get-local-ipv6" ]]; then
+    local ipv6
+    ipv6=$(curl -s https://api64.ipify.org)
+    retval=$?
+    if [ "${retval}" -eq 0 ]; then
+      # Make sure the IPv6 is in an expanded form
+      ipv6=$(ipcalc -s "${ipv6}" | awk '/Full Address:/{ print $NF }')
+      echo "${ipv6}"
+    fi
+  # usage: maxiwall cmd aipdb-get-ip-info <target/ip>
+  # also works with domain, IPv6 and netmask
+  elif [[ "${action}" == "aipdb-get-ip-info" || "${action}" == "aipdb-write-ip-cache" || "${action}" == "write-aipdb-ip-cache" || "${action}" == "agii" ]]; then
+    local target
+    shift
+    target="$1"
+    aipdb_get_ip_info "${target}"
+
+  # usage: maxiwall cmd aipdb-report-ip-info <target/ip>
+  # also works with domain, IPv6 and netmask
+  elif [[ "${action}" == "aipdb-report-ip-info" || "${action}" == "aipdb-report-ip" || "${action}" == "report-aipdb-ip" || "${action}" == "arii" ]]; then
+    local target report_category report_comment
+    shift
+    target="$1"
+    report_category="$2"
+    report_comment="${*:3}"
+    aipdb_report_ip_info "${target}" "${report_category}" "${report_comment}"
+  # usage: maxiwall cmd aipdb-search-ip-variable <ip> <variable>
+  elif [[ "${action}" == "aipdb-search-ip-variable" || "${action}" == "aipdb-get-cache-variable" || "${action}" == "asiv" ]]; then
+    local target variable_field
+    shift
+    target="$1"
+    variable_field="$2"
+    aipdb_search_ip_variable "${target}" "${variable_field}"
+    # usage: maxiwall cmd aipdb-get-ip-cache-status
+  elif [[ "${action}" == "aipdb-get-cache-status" || "${action}" == "aipdb-get-ip-cache-status" || "${action}" == "agics" ]]; then
+    # remove cmd argument
+    local target
+    shift
+    target="$1"
+
+    if ipcalc -4 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Target is valid IPv4"
+      ip="${target}"
+    elif ipcalc -6 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Target is valid IPv6"
+      ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+      [[ "${VERBOSE}" == "true" ]] && echo "Target IPv6 is expanded to ${ip}"
+    else
+      # [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+      #echo "error-invalid-ip-address"
+      #exit 1
+      # Since we don't care if IP is valid or not, we assign IP=target, because we want to search
+      ip="${target}"
+    fi
+
+    touch "${AIPDB_IP_CACHE_INFO_FILE}"
+
+    grep -wq "^\[ip: ${ip}" "${AIPDB_IP_CACHE_INFO_FILE}"
+    retval=$?
+    if [ "${retval}" -eq 0 ]; then
+      # Cached in AIPDB file
+      echo "true"
+      return 0
+    else
+      # Not cached in AIPDB file
+      echo "false"
+      return 1
+    fi
+  elif [[ "${action}" == "whitelist-search-ip-variable" || "${action}" == "whitelist-get-ip-variable" || "${action}" == "wsiv" ]]; then
+    local target variable_field
+    shift
+    target="$1"
+    variable_field="$2"
+    maxiwall_search_whitelist_ip_variable "${target}" "${variable_field}"
+  elif [[ "${action}" == "whitelist-search-ip-status" || "${action}" == "whitelist-get-ip-status" || "${action}" == "wsis" ]]; then
+    # remove cmd argument
+    local target
+    shift
+    target="$1"
+
+    if ipcalc -4 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Target is valid IPv4"
+      ip="${target}"
+    elif ipcalc -6 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Target is valid IPv6"
+      ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+      [[ "${VERBOSE}" == "true" ]] && echo "Target IPv6 is expanded to ${ip}"
+    else
+      # [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+      #echo "error-invalid-ip-address"
+      #exit 1
+      # Since we don't care if IP is valid or not, we assign IP=target, because we want to search
+      ip="${target}"
+    fi
+
+    touch "${MAXIWALL_WHITELISTED_IP_FILE}"
+
+    grep -wq "^\[ip: ${ip}" "${MAXIWALL_WHITELISTED_IP_FILE}"
+    retval=$?
+    if [ "${retval}" -eq 0 ]; then
+      echo "true"
+      return 0
+    else
+      echo "false"
+      return 1
+    fi
+  elif [[ "${action}" == "blcheck-get-cache-status" || "${action}" == "blcheck-get-ip-cache-status" || "${action}" == "bgcs" ]]; then
+    # remove cmd argument
+    local target
+    shift
+    target="$1"
+
+    if ipcalc -4 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Target is valid IPv4"
+      ip="${target}"
+    elif ipcalc -6 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Target is valid IPv6"
+      ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+      [[ "${VERBOSE}" == "true" ]] && echo "Target IPv6 is expanded to ${ip}"
+    else
+      # [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+      #echo "error-invalid-ip-address"
+      #exit 1
+      # Since we don't care if IP is valid or not, we assign IP=target, because we want to search
+      ip="${target}"
+    fi
+
+    touch "${BLCHECK_CACHED_IP_FILE}"
+
+    grep -wq "^\[target: ${ip}" "${BLCHECK_CACHED_IP_FILE}"
+    retval=$?
+    if [ "${retval}" -eq 0 ]; then
+      echo "true"
+      return 0
+    else
+      echo "false"
+      return 1
+    fi
+  elif [[ "${action}" == "blcheck-search-ip-variable" || "${action}" == "blcheck-get-ip-variable" || "${action}" == "bsiv" ]]; then
+    local target variable_field
+    shift
+    target="$1"
+    variable_field="$2"
+    blcheck_search_blacklist_ip_variable "${target}" "${variable_field}"
+
+  elif [[ "${action}" == "ignored-search-ip-status" || "${action}" == "ignored-get-ip-status" || "${action}" == "isis" ]]; then
+    # remove cmd argument
+    local target
+    shift
+    target="$1"
+
+    if ipcalc -4 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Target is valid IPv4"
+      ip="${target}"
+    elif ipcalc -6 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Target is valid IPv6"
+      ip=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+      [[ "${VERBOSE}" == "true" ]] && echo "Target IPv6 is expanded to ${ip}"
+    else
+      # [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+      #echo "error-invalid-ip-address"
+      #exit 1
+      # Since we don't care if IP is valid or not, we assign IP=target, because we want to search
+      ip="${target}"
+    fi
+
+    touch "${MAXIWALL_IGNORED_IP_FILE}"
+
+    grep -wq "^\[ip: ${ip}" "${MAXIWALL_IGNORED_IP_FILE}"
+    retval=$?
+    if [ "${retval}" -eq 0 ]; then
+      echo "true"
+      return 0
+    else
+      echo "false"
+      return 1
+    fi
+  # This is used to convert IP to network CIDR. eg, maxiwall cmd ip-tocidr <ip> <netmask>
+  elif [[ "${action}" == "ip-to-cidr" || "${action}" == "ip2cidr" ]]; then
+    local ip netmask retval
+    shift
+    ip="$1"
+    netmask="$2"
+    ip_to_cidr "${ip}" "${netmask}"
+    retval=$?
+    return ${retval}
+    # TODO test this on maxiwall.lua
+  elif [[ "${action}" == "stop-suricata" ]]; then
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Stopping suricata.service ..."
+    systemctl stop suricata
+    retval=$?
+    if [ "${retval}" -eq 0 ]; then
+      echo "restart-success"
+    else
+      echo "restart-failed"
+    fi
+  # usage: maxiwall cmd blcheck <ip>
+  # output (1) 1) "< .. blacklist count .. >" - It will only output number of blacklist count after scan
+  elif [[ "${action}" == "rblscan" || "${action}" == "blcheck" || "${action}" == "rbls" || "${action}" == "blscan" ]]; then
+    local target scan_blacklist_count retval blcheck_bin
+    blcheck_bin=$(which blcheck)
+    if [ -z "${blcheck_bin}" ]; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Error, blacklist checker (blcheck) is not installed"
+      echo "error-blcheck-not-installed"
+      # echo "0"
+      exit 1
+    fi
+    shift # remove cmd argument
+    target="$1"
+    # This will only output blacklist count if we use $?
+    scan_blacklist_count=$(
+      blcheck -qk -j "75%" -l "${BLCHECK_SERVICE_FILE}" -o "${BLCHECK_CACHED_IP_FILE}" "${target}"
+      echo $?
+    )
+    echo "${scan_blacklist_count}"
+  elif [[ "${action}" == "csf-count-ip2cidr" || "${action}" == "csf-count-ipv4-to-cidr24" || "${action}" == "csf-calc-ip-to-cidr" || "${action}" == "csf-cip2cidr" || "${action}" == "csf-count-ip2cidr24" ]]; then
+    local ip input_file
+    shift
+    ip="$1"
+    input_file="${CSF_IP_PERMANENT_BLOCK_FILE}"
+    count_input_ipv4_cidr24 "${ip}" "${input_file}"
+  elif [[ "${action}" == "get-ip2cidr24" || "${action}" == "get-ipv4-to-cidr24" || "${action}" == "get-ip2cidr24" || "${action}" == "ip2cidr24" ]]; then
+    local ip
+    shift
+    ip="$1"
+    ip_to_cidr "${ip}" "24"
+  # usage: maxiwall cmd maxiwall-search-ip-log-variable <ip> <variable>
+  elif [[ "${action}" == "maxiwall-search-ip-log-variable" || "${action}" == "maxiwall-get-cache-log-variable" || "${action}" == "msilv" ]]; then
+    local target variable_field
+    shift
+    target="$1"
+    variable_field="$2"
+    maxiwall_search_ip_log_variable "${target}" "${variable_field}"
+  # usage: maxiwall cmd maxiwall-search-ip-log-cache <ip>
+  elif [[ "${action}" == "maxiwall-search-ip-log-cache" || "${action}" == "maxiwall-get-cache-log-cache" || "${action}" == "msilc" ]]; then
+    local target count_result
+    shift
+    target="$1"
+    maxiwall_search_ip_log_cache "${target}"
+    # usage: maxiwall cmd scanlog <ip>
+  elif [[ "${action}" == "scan-log" || "${action}" == "logscan" || "${action}" == "log-scan" || "${action}" == "scanlog" ]]; then
+    local target
+    shift
+    target="$1"
+    scan_log "${target}"
+    # source or inbound alert count
+  elif [[ "${action}" == "get-maxiwall-alert-source-ip-count" || "${action}" == "get-maxiwall-alert-inbound-ip-count" || "${action}" == "gmasic" ]]; then
+    local ip target retval
+    shift
+    target="$1"
+
+    if ipcalc -4 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+      ip="${target//./\\.}"
+    elif ipcalc -6 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+      # Need to expand, because the suricata log file only log full address form
+      target=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+      ip="${target//:/\\:}"
+    else
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error IP is not valid IPv4 or IPv6"
+      echo "error-ip-not-valid"
+      exit 1
+    fi
+
+    [[ "${VERBOSE}" == "true" ]] && echo "Notice, IP address string escaped as ${ip}"
+
+    count_result=$(grep -c "\[SOURCE\: ${ip}" "${MAXIWALL_ALERT_LOG}")
+    if [ -z "${count_result}" ]; then
+      echo "0"
+    else
+      echo "${count_result}"
+    fi
+  # Destination / outbound / target count
+  elif [[ "${action}" == "get-maxiwall-alert-target-ip-count" || "${action}" == "get-maxiwall-alert-destination-ip-count" || "${action}" == "get-maxiwall-alert-outbound-ip-count" || "${action}" == "gmatic" ]]; then
+    local ip target retval
+    shift
+    target="$1"
+    if ipcalc -4 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+      ip="${target//./\\.}"
+    elif ipcalc -6 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+      # Need to expand, because the suricata log file only log full address form
+      target=$(ipcalc -s "${target}" | awk '/Full Address:/{ print $NF }')
+      ip="${target//:/\\:}"
+    else
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error IP is not valid IPv4 or IPv6"
+      echo "error-ip-not-valid"
+      exit 1
+    fi
+
+    [[ "${VERBOSE}" == "true" ]] && echo "Notice, IP address string escaped as ${ip}"
+
+    count_result=$(grep -c "\[TARGET\: ${ip}" "${MAXIWALL_ALERT_LOG}")
+    if [ -z "${count_result}" ]; then
+      echo "0"
+    else
+      echo "${count_result}"
+    fi
+    # Usage: maxiwall cmd block-target <ip/domain> <comment>
+  elif [[ "${action}" == "block-target" || "${action}" == "block-ip" || "${action}" == "deny-ip" || "${action}" == "deny-target" ]]; then
+    # Note CSF will always use compressed IPv6 address in csf.deny even if we pass full uncompressed IP
+    local target csf_ip_previous_block_status csf_ip_block_status csf_success_block_status block_msg
+    shift
+    target="$1"
+    block_msg="${SCRIPT_NAME}: ${*:2}"
+
+    if ipcalc -4 -sc "${target}" || ipcalc -6 -sc "${target}"; then
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is valid IPv4 or IPv6"
+      ip="${target}"
+    else
+      # Target might be domain so use this to resolve to IP
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Target is not IPv4 nor IPv6 (Resolving to IP)"
+      ip=$(dig +short -t "a" +time=3 +tries=2 "${target}" | grep -om 1 "${REGEX_IPV4}")
+      if [ -z "${ip}" ]; then
+        ip=$(dig +short -t "aaaa" +time=3 +tries=2 "${target}" | grep -om 1 "${REGEX_IPV6}")
+      fi
+    fi
+
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
+
+    # Sometimes target is not reachable or contains another domain (unresolvable), in this case we quit
+    if [ -z "${ip}" ]; then
+      [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, No DNS record found for target ${target}"
+      echo "error-no-dns-record"
+      exit 1
+    fi
+
+    # This will check if the existing IP has been blocked before (works with IPv6 and IPv4)
+    csf_ip_previous_block_status=$(csf -g "${ip}" | grep -E 'IPSET: Set:chain_DENY Match:|IPSET: Set:chain_6_DENY Match:')
+
+    # If string found, means already blocked
+    if [ -n "${csf_ip_previous_block_status}" ]; then
+      [[ "${VERBOSE}" == "true" ]] && echo "Notice, IP ${ip} already blocked"
+      echo "ip-already-blocked"
+      exit 1
+    else
+      [[ "${VERBOSE}" == "true" ]] && echo "Notice, IP ${ip} has not been blocked"
+      csf_ip_block_status=$(csf -d "${ip}" "${block_msg}")
+      csf_success_block_status=$(echo "${csf_ip_block_status}" | grep 'Adding')
+      retval=$?
+      if [ "${retval}" -eq 0 ]; then
+        [[ "${VERBOSE}" == "true" ]] && echo "${csf_success_block_status}"
+        echo "ok-ip-block-success"
+        exit 0
+      else
+        [[ "${VERBOSE}" == "true" ]] && echo "${csf_ip_block_status}"
+        echo "error-ip-block-failed"
+        exit 1
+      fi
+    fi
+  else
+    [[ "${VERBOSE}" == "true" ]] && echo "[${SCRIPT_NAME}]: Error, invalid action ${action} supplied"
+    echo "error-invalid-action"
+    exit 1
+  fi
+}
+
+# Required
+# https://github.com/sofibox/grepaddr/blob/master/grepaddr.py
+
+BIN_DEPS="ipcalc grepaddr blcheck"
+for BIN_DEP in $BIN_DEPS; do
+  which "${BIN_DEP}" >/dev/null ||
+    NOT_FOUND="${BIN_DEP} ${NOT_FOUND}"
+done
+
+if [ -n "${NOT_FOUND}" ]; then
+  echo -e "Error: Required program could not be found: ${NOT_FOUND}"
+  exit 1
+fi
+
+ADMIN_EMAIL="webmaster@sofibox.com"
+SCRIPT_PATH="$(dirname "$(readlink -f "$0")")"
+SCRIPT_NAME=$(basename -- "$0")
+BOX_HOSTNAME=$(hostname)
+MAIL_BIN=$(command -v mail)
+DATE_BIN=$(command -v date)
+
+LOG_PATH="${SCRIPT_PATH}/log/"
+CONFIG_PATH="${SCRIPT_PATH}/conf"
+CACHE_PATH="${SCRIPT_PATH}/cache"
+TEMP_PATH="${SCRIPT_PATH}/tmp"
+CODE_PATH="${SCRIPT_PATH}/code"
+PROCESS_PATH="${SCRIPT_PATH}/process"
+MAXIWALL_SUSPICIOUS_IP_PATH="${CACHE_PATH}/ips"
+
+mkdir -p "${LOG_PATH}"
+mkdir -p "${CONFIG_PATH}"
+mkdir -p "${CACHE_PATH}"
+mkdir -p "${TEMP_PATH}"
+mkdir -p "${CODE_PATH}"
+mkdir -p "${PROCESS_PATH}"
+mkdir -p "${MAXIWALL_SUSPICIOUS_IP_PATH}"
+
+# REPORT FILES
+DATE_TIME_NOW="$(date '+%d-%m-%Y_%H-%M-%S')" #31-03-2020_11-56-16
+
+# APPLICATION SPECIFIC CONFIGURATION
+SEARCH_FIELD_AWK="${CODE_PATH}/search_field.awk"
+if [ ! -f "${SEARCH_FIELD_AWK}" ]; then
+  echo "[${SCRIPT_NAME}]: Error, [SEARCH_FIELD_AWK] code does not exist! "
+  exit 1
+fi
+
+REGEX_IPV4='\([0-9]\{1,3\}\)\.\([0-9]\{1,3\}\)\.\([0-9]\{1,3\}\)\.\([0-9]\{1,3\}\)'
+REGEX_IPV6='\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}'
+
+RETVAL=1
+ACTION="$1"
+ARGNUM="$#"
+
+if [ ${ARGNUM} -eq 0 ]; then
+  echo "[${SCRIPT_NAME}]: Error, no argument is supplied. Use [ ${SCRIPT_NAME} --help ] to see the valid options"
+  exit 2
+fi
+MAXIWALL_CONF="${SCRIPT_PATH}/maxiwall.conf"
+# Get all variables from maxiwall.conf
+if [ -s "${MAXIWALL_CONF}" ]; then
+  source "${MAXIWALL_CONF}"
+else
+  echo "[${SCRIPT_NAME}]: Warning, config file ${CONFIG_FILE} does not exist or empty. Initialize new config ..."
+  touch "${MAXIWALL_CONF}"
+  # Remember not to use underscore for variable in read
+  read -r -p "[${SCRIPT_NAME}]: Enter AIPDB_CHECK_URL: " checkurl
+  echo
+  read -r -p "[${SCRIPT_NAME}]: Enter AIPDB_REPORT_URL: " reporturl
+  echo
+  read -r -s -p "[${SCRIPT_NAME}]: Enter AIPDB_API_KEY: " apikey
+  echo
+  {
+    echo "CONFIG_VERSION=\"1.0\""
+    echo ""
+    echo "# AIPDB CONFIG:"
+    echo "AIPDB_CHECK_URL=\"${checkurl}"\"
+    echo "AIPDB_REPORT_URL=\"${reporturl}"\"
+    echo "AIPDB_API_KEY=\"${apikey}"\"
+  } >"${MAXIWALL_CONF}"
+  source "${MAXIWALL_CONF}"
+fi
+
+# Make sure the source is not empty
+if [ -z "${CONFIG_VERSION}" ]; then
+  exit 1
+fi
+
+AIPDB_IP_CACHE_INFO_FILE="${CACHE_PATH}/aipdb_ip_cache_info_file.cache"
+AIPDB_IP_CACHE_REPORT_FILE="${CACHE_PATH}/aipdb_ip_cache_report_file.cache"
+
+# BLCHECK_CACHED_IP_FILE="${CACHE_PATH}/blcheck_blacklisted_ip.cache"
+# Use this to share with the scan
+BLCHECK_CACHED_IP_FILE="$(blcheck get-default-output-file)"
+BLCHECK_SERVICE_FILE="${CONFIG_PATH}/blcheck_service_file.lst"
+
+SURICATA_CONF="/etc/suricata/suricata.yaml"
+SURICATA_LOG="/var/log/suricata/suricata.log"
+SURICATA_FAST_LOG="/var/log/suricata/fast.log"
+SURICATA_HTTP_LOG="/var/log/suricata/http.log"
+SURICATA_EVE_JSON="/var/log/suricata/eve.json"
+
+REPORT_FILE="${LOG_PATH}/${SCRIPT_NAME}-${DATE_TIME_NOW}-report.log"
+MAXIWALL_WHITELISTED_IP_FILE="${CONFIG_PATH}/maxiwall_wl_ip.lst"
+MAXIWALL_IGNORED_IP_FILE="${CONFIG_PATH}/maxiwall_ign_ip.lst"
+MAXIWALL_SUPPRESSED_IP_FILE="${CONFIG_PATH}/maxiwall_sup_ip.lst"
+MAXIWALL_SUPPRESSED_MSG_FILE="${CONFIG_PATH}/maxiwall_sup_msg.lst"
+
+MAXIWALL_LOG="/var/log/suricata/maxiwall.log"
+MAXIWALL_ALERT_LOG="/var/log/suricata/${MAXIWALL_ALERT_LOG_NAME}"
+MAXIWALL_LUA="/etc/suricata/lua-output/maxiwall.lua"
+MAXIWALL_ALERT_LOG_LIST="${CONFIG_PATH}/maxiwall_alert_log.lst"
+MAXIWALL_SUSPICIOUS_IP_LOG_CACHE="${CACHE_PATH}/maxiwall_suspicious_ip_log.cache"
+touch "${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}"
+
+CSF_IP_PERMANENT_BLOCK_FILE="/etc/csf/csf.deny"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  # Display help and usage
+  -h | --help | help)
+    usage
+    exit 0
+    ;;
+  -V | --version | version) # Display Program version
+    echo "${_APP_INFO}"
+    echo ""
+    echo "${_APP_SPECIFIC_NAME}-${_APP_VERSION_STATUS}"
+    echo "${_AUTHOR}"
+    exit 0
+    break
+    ;;
+  -t | --test | test)
+
+    exit 0
+    break
+    ;;
+  test-mode | test-rule)
+    # This will test rule
+    # To generate rule test, we can use telnet to this server
+    clear_database_cache
+    echo "[${SCRIPT_NAME}]: Stopping suricata.service ..."
+    systemctl stop suricata
+    echo "[${SCRIPT_NAME}]: Clear all suricata log files ..."
+    rm -rf /var/log/suricata/*
+    echo "[${SCRIPT_NAME}]: Running suricata in test mode ..."
+    suricata -c /etc/suricata/suricata-test.yaml -i eth0 --init-errors-fatal
+    exit 0
+    break
+    ;;
+  init)
+    # TODO add testing APIDBCHECK URL AIPDB_REPORT_URL for 200 status
+    echo "[${SCRIPT_NAME}]: Stopping suricata.service ..."
+    systemctl stop suricata
+    echo "[${SCRIPT_NAME}]: Clear all suricata log files ..."
+    rm -rf /var/log/suricata/*
+    clear_database_cache
+    # TODO only enable below when in production because this is so slow
+    echo -n "[${SCRIPT_NAME}]: Updating suricata rule sources ..."
+    suricata-update update-sources
+    echo -n "[${SCRIPT_NAME}]: Updating suricata rule definition ..."
+    suricata-update 2>&1 | grep -v 'Found duplicate rule SID'
+    echo "[${SCRIPT_NAME}]: Starting suricata.service ..."
+    systemctl start suricata
+    exit 0
+    break
+    ;;
+  scanlog | scan-log)
+    shift
+    SHORT_OPTS="v"
+    LONG_OPTS="verbose"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "${SCRIPT_NAME}" -- "$@" 2>&1)
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: $(msg red)Error, ${OPTIONS}$(msg end)"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    VERBOSE=false
+    DEBUG=false
+    while true; do
+      case "$1" in
+      -v | --verbose)
+        VERBOSE=true
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    scan_log "$@"
+    exit 0
+    break
+    ;;
+  c | cmd | command)
+    SHORT_OPTS="v,d"
+    LONG_OPTS="verbose,debug"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "${SCRIPT_NAME}" -- "$@" 2>&1)
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: $(msg red)Error, ${OPTIONS}$(msg end)"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    VERBOSE=false
+    DEBUG=false
+    while true; do
+      case "$1" in
+      -v | --verbose)
+        VERBOSE=true
+        shift
+        ;;
+      -d | --debug)
+        DEBUG=true
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    cmd "$@"
+    exit 0
+    break
+    ;;
+  update-rule | suricata-update)
+    echo -n "[${SCRIPT_NAME}]: Updating suricata rule definition ..."
+    suricata-update update-sources
+    suricata-update 2>&1 | grep -v 'Found duplicate rule SID'
+    check_status "$?"
+    exit 0
+    break
+    ;;
+  edit-file | editfile)
+    EDIT_FILE="$2"
+    if [ "${EDIT_FILE}" == "suricata.log" ]; then
+      nano -c "${SURICATA_LOG}"
+    elif [[ "${EDIT_FILE}" == "suricata.conf" || "${EDIT_FILE}" == "suricata.yaml" ]]; then
+      nano -c "${SURICATA_CONF}"
+    elif [ "${EDIT_FILE}" == "maxiwall.lua" ]; then
+      nano -c "${MAXIWALL_LUA}"
+    elif [ "${EDIT_FILE}" == "eve.json" ]; then
+      nano -c "${SURICATA_EVE_JSON}"
+    elif [ "${EDIT_FILE}" == "fast.log" ]; then
+      nano -c "${SURICATA_FAST_LOG}"
+    elif [ "${EDIT_FILE}" == "maxiwall.log" ]; then
+      nano -c "${MAXIWALL_LOG}"
+    elif [ "${EDIT_FILE}" == "maxiwall.conf" ]; then
+      nano -c "${MAXIWALL_CONF}"
+    elif [[ "${EDIT_FILE}" == "aipdb-ip-cache" || "${EDIT_FILE}" == "aipdb-file-cache" || "${EDIT_FILE}" == "aipdb-cache-file" || "${EDIT_FILE}" == "aipdb-cache-ip" || "${EDIT_FILE}" == "aipdb-ip-cache-file" ]]; then
+      nano -c "${AIPDB_IP_CACHE_INFO_FILE}"
+    elif [[ "${EDIT_FILE}" == "maxiwall-whitelist-ip" || "${EDIT_FILE}" == "maxiwall-whitelist-ip-file" ]]; then
+      nano -c "${MAXIWALL_WHITELISTED_IP_FILE}"
+    fi
+    exit 0
+    break
+    ;;
+  clear-log | clearlog)
+    CLEAR_LOG="$2"
+    if [ "${CLEAR_LOG}" == "suricata.log" ]; then
+      cat /dev/null >"${SURICATA_LOG}"
+      check_status "$?"
+    elif [ "${CLEAR_LOG}" == "fast.log" ]; then
+      cat /dev/null >"${SURICATA_FAST_LOG}"
+      check_status "$?"
+    elif [ "${CLEAR_LOG}" == "maxiwall.log" ]; then
+      cat /dev/null >"${MAXIWALL_LOG}"
+      check_status "$?"
+    elif [ "${CLEAR_LOG}" == "maxiwall-alert.log" ]; then
+      cat /dev/null >"${MAXIWALL_ALERT_LOG}"
+      check_status "$?"
+    elif [ "${CLEAR_LOG}" == "maxiwall-suspicious-ip-scan.log" ]; then
+      cat /dev/null >"${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}"
+      check_status "$?"
+
+    fi
+    exit 0
+    break
+    ;;
+  clear-cache)
+    shift
+    clear_database_cache
+    exit 0
+    break
+    ;;
+  clear-file | clearfile)
+    CLEAR_FILE="$2"
+    if [ "${CLEAR_FILE}" == "suricata.log" ]; then
+      cat /dev/null >"${SURICATA_LOG}"
+      check_status "$?"
+    elif [ "${CLEAR_FILE}" == "fast.log" ]; then
+      cat /dev/null >"${SURICATA_FAST_LOG}"
+      check_status "$?"
+    elif [ "${CLEAR_FILE}" == "maxiwall.log" ]; then
+      cat /dev/null >"${MAXIWALL_LOG}"
+      check_status "$?"
+    elif [ "${CLEAR_FILE}" == "maxiwall-alert.log" ]; then
+      cat /dev/null >"${MAXIWALL_ALERT_LOG}"
+      check_status "$?"
+    elif [ "${CLEAR_FILE}" == "suricata.conf" ]; then
+      cat /dev/null >"${SURICATA_CONF}"
+      check_status "$?"
+    elif [ "${CLEAR_FILE}" == "maxiwall.lua" ]; then
+      cat /dev/null >"${MAXIWALL_LUA}"
+      check_status "$?"
+    elif [ "${CLEAR_FILE}" == "eve.json" ]; then
+      cat /dev/null >"${SURICATA_EVE_JSON}"
+      check_status "$?"
+    elif [[ "${CLEAR_FILE}" == "aipdb-cache-ip" || "${CLEAR_FILE}" == "aipdb-ip-cache" || "${CLEAR_FILE}" == "aipdb-cache-file" ]]; then
+      cat /dev/null >"${AIPDB_IP_CACHE_INFO_FILE}"
+      check_status "$?"
+    elif [[ "${CLEAR_FILE}" == "blcheck-cache-ip" || "${CLEAR_FILE}" == "blcheck-cache-ip-file" || "${CLEAR_FILE}" == "blcheck-ip-cache-file" || "${CLEAR_FILE}" == "blcheck-cache-file" ]]; then
+      cat /dev/null >"${BLCHECK_CACHED_IP_FILE}"
+      check_status "$?"
+    fi
+    exit 0
+    break
+    ;;
+  stop | service-stop | stop-service)
+    STOP="$2"
+    if [ "${STOP}" == "suricata" ]; then
+      systemctl stop suricata
+      check_status "$?"
+    elif [ "${STOP}" == "csf" ]; then
+      systemctl stop csf
+      check_status "$?"
+    elif [ "${STOP}" == "lfd" ]; then
+      systemctl stop lfd
+      check_status "$?"
+    elif [[ "${STOP}" == "csf-lfd" || "${STOP}" == "csf_lfd" ]]; then
+      csf -x >/dev/null
+      check_status "$?"
+    fi
+    exit 0
+    break
+    ;;
+  restart | service-restart | restart-service)
+    RESTART="$2"
+    if [ "${RESTART}" == "suricata" ]; then
+      systemctl restart suricata
+      check_status "$?"
+    elif [ "${RESTART}" == "csf" ]; then
+      csf -r >/dev/null
+      check_status "$?"
+    elif [ "${RESTART}" == "lfd" ]; then
+      systemctl restart lfd
+      check_status "$?"
+    elif [[ "${RESTART}" == "csf-lfd" || "${RESTART}" == "csf_lfd" ]]; then
+      csf -ra >/dev/null
+      check_status "$?"
+    fi
+    exit 0
+    break
+    ;;
+  status | service-status | status-service)
+    STATUS="$2"
+    if [ "${STATUS}" == "suricata" ]; then
+      systemctl status suricata
+      check_status "$?"
+    elif [ "${STATUS}" == "csf" ]; then
+      systemctl status csf
+      check_status "$?"
+    elif [ "${STATUS}" == "lfd" ]; then
+      systemctl status lfd
+      check_status "$?"
+    fi
+    exit 0
+    break
+    ;;
+  edit-conf | editconf)
+    EDIT_CONF="$2"
+    if [ -z "${EDIT_CONF}" ]; then
+      nano -c "${SURICATA_CONF}"
+    elif [[ "${EDIT_CONF}" == "suricata.yaml" || "${EDIT_CONF}" == "suricata.conf" ]]; then
+      nano -c "${SURICATA_CONF}"
+    elif [[ "${EDIT_CONF}" == "maxiwall.conf" ]]; then
+      nano -c "${MAXIWALL_CONF}"
+    fi
+    exit 0
+    break
+    ;;
+  show-log | showlog | log)
+    SHOW_LOG_FILE="$2"
+    if [ "${SHOW_LOG_FILE}" == "suricata.log" ]; then
+      tail -n 25 -F "${SURICATA_LOG}"
+    elif [ "${SHOW_LOG_FILE}" == "fast.log" ]; then
+      tail -n 25 -F "${SURICATA_FAST_LOG}"
+    elif [ "${SHOW_LOG_FILE}" == "http.log" ]; then
+      tail -n 25 -F "${SURICATA_HTTP_LOG}"
+    elif [ "${SHOW_LOG_FILE}" == "eve.json" ]; then
+      tail -n 25 -F "${SURICATA_EVE_JSON}"
+    elif [ "${SHOW_LOG_FILE}" == "maxiwall.log" ]; then
+      tail -n 25 -F "${MAXIWALL_LOG}"
+    elif [ "${SHOW_LOG_FILE}" == "maxiwall-alert.log" ]; then
+      tail -n 25 -F "${MAXIWALL_ALERT_LOG}"
+    elif [ "${SHOW_LOG_FILE}" == "maxiwall-suspicious-ip.log" ]; then
+      tail -n 25 -F "${MAXIWALL_SUSPICIOUS_IP_LOG_CACHE}"
+
+    fi
+    exit 0
+    break
+    ;;
+  show-file | showfile | file)
+    SHOW_FILE="$2"
+    if [[ "${SHOW_FILE}" == "aipdb-ip-info" || "${SHOW_FILE}" == "aipdb-info-cache-file" || "${SHOW_FILE}" == "aipdb-info-file" || "${SHOW_FILE}" == "aipdb-cache-file" ]]; then
+      tail -n 25 -F "${AIPDB_IP_CACHE_INFO_FILE}"
+    elif [[ "${SHOW_FILE}" == "aipdb-ip-report" || "${SHOW_FILE}" == "aipdb-report-cache-file" || "${SHOW_FILE}" == "aipdb-report-file" ]]; then
+      tail -n 25 -F "${AIPDB_IP_CACHE_REPORT_FILE}"
+    elif [[ "${SHOW_FILE}" == "blcheck-ip-cache" || "${SHOW_FILE}" == "blcheck-cache-file" || "${SHOW_FILE}" == "blcheck-cache-file" ]]; then
+      tail -n 25 -F "${BLCHECK_CACHED_IP_FILE}"
+    fi
+    exit 0
+    break
+    ;;
+  edit-log | editlog)
+    EDIT_LOG="$2"
+    if [ "${EDIT_LOG}" == "suricata.log" ]; then
+      nano -c "${SURICATA_LOG}"
+    elif [ "${EDIT_LOG}" == "fast.log" ]; then
+      nano -c "${SURICATA_FAST_LOG}"
+    elif [ "${EDIT_LOG}" == "maxiwall.log" ]; then
+      nano -c "${MAXIWALL_LOG}"
+    elif [ "${EDIT_LOG}" == "maxiwall-alert.log" ]; then
+      nano -c "${MAXIWALL_ALERT_LOG}"
+    fi
+    exit 0
+    break
+    ;;
+  count-ip2cidr | count-ipv4-to-cidr24 | calc-ip-to-cidr | cip2cidr | count-ip2cidr24)
+    shift
+    count_input_ipv4_cidr24 "$@"
+    exit 0
+    break
+    ;;
+  get-ip2cidr | ip2cidr)
+    shift
+    ip_to_cidr "$@"
+    exit 0
+    break
+    ;;
+  scan | blcheck | rblscan | blscan)
+    BLCHECK=$(which blcheck)
+    if [ -z "${BLCHECK}" ]; then
+      echo "Error, blacklist checker (blcheck) is not installed"
+      exit 1
+    fi
+    TARGET="$2"
+    if [ -z "${TARGET}" ]; then
+      echo "Usage: ${SCRIPT_NAME} $1 <TARGET> <OPTIONS> "
+      echo "<TARGET>: IP or domain"
+      echo "<OPTIONS>: eg: -v"
+      echo ""
+      exit 1
+    fi
+    DEFAULT_OPTIONS="-o ${BLCHECK_CACHED_IP_FILE} -k"
+    OPTIONS="${*:3}"
+    echo "Running blcheck with options: ${DEFAULT_OPTIONS} ${OPTIONS}"
+    blcheck ${DEFAULT_OPTIONS} ${OPTIONS} "${TARGET}"
+    exit 0
+    break
+    ;;
+  d | bip | deny | block | block-ip | deny-ip)
+    IP="$2"
+    IP_COUNTRY="Unknown"
+    IP_LABEL="Unknown"
+
+    exit 0
+    break
+    ;;
+
+  iip | ignore | ignore-ip)
+    IP="$2"
+    SIGNATURE_ID="$3"
+    MSG_COMMENT="${*:4}"
+
+    if [ -z "${IP}" ]; then
+      echo "[${SCRIPT_NAME}]: Error, missing IP address argument. e.g: ${SCRIPT_NAME} $1 1.2.3.4 <signature_id> <comment string>"
+      exit 1
+    fi
+
+    touch "${MAXIWALL_IGNORED_IP_FILE}"
+
+    grep -wq "^\[ip: ${IP}" "${MAXIWALL_IGNORED_IP_FILE}"
+
+    RETVAL=$?
+    if [ "${RETVAL}" -eq 0 ]; then
+      echo "[${SCRIPT_NAME}]: Warning, IP [${IP}] is already in the whitelist file"
+    else
+      if ipcalc -4 -sc "${IP}"; then
+        echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+        IP="${IP}"
+      elif ipcalc -6 -sc "${IP}"; then
+        echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+        IP=$(ipcalc -s "${IP}" | awk '/Full Address:/{ print $NF }')
+        echo "[${SCRIPT_NAME}]: Target IPv6 is expanded to ${IP}"
+      else
+        echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+        exit 1
+      fi
+      # Signature entry is optional. If no signature is supplied, meaning the IP is suppress as global without signature
+      if [ -z "${SIGNATURE_ID}" ]; then
+        # Have not implement this signature so don't care
+        #echo "[${SCRIPT_NAME}]: Warning, missing signature ID argument. IP will be suppressed globally without signature filter"
+        SIGNATURE_ID="FALSE"
+        # exit 0
+      fi
+
+      echo "[ip: ${IP} [sid: ${SIGNATURE_ID} [time: $(date -u +%s) [comment: \"${MSG_COMMENT}\"" >>"${MAXIWALL_IGNORED_IP_FILE}"
+      RETVAL=$?
+      if [ "${RETVAL}" -eq 0 ]; then
+        echo "[${SCRIPT_NAME}]: Success, IP ${IP} is now in whitelisted file and won't be reported in maxiwall.lua"
+      else
+        echo "[${SCRIPT_NAME}]: Error, when writing IP ${IP} in whitelisted file"
+      fi
+    fi
+    exit 0
+    break
+    ;;
+  w | wip | whitelist | whitelist-ip)
+    IP="$2"
+    SIGNATURE_ID="$3"
+    MSG_COMMENT="${*:4}"
+
+    if [ -z "${IP}" ]; then
+      echo "[${SCRIPT_NAME}]: Error, missing IP address argument. e.g: ${SCRIPT_NAME} $1 1.2.3.4 <optional_signature_id> <comment string>"
+      exit 1
+    fi
+
+    touch "${MAXIWALL_WHITELISTED_IP_FILE}"
+    grep -wq "^\[ip: ${IP}" "${MAXIWALL_WHITELISTED_IP_FILE}"
+
+    RETVAL=$?
+
+    if [ "${RETVAL}" -eq 0 ]; then
+      echo "[${SCRIPT_NAME}]: Warning, IP [${IP}] is already in the whitelist file"
+    else
+
+      if ipcalc -4 -sc "${IP}"; then
+        echo "[${SCRIPT_NAME}]: Target is valid IPv4"
+        IP="${IP}"
+      elif ipcalc -6 -sc "${IP}"; then
+        echo "[${SCRIPT_NAME}]: Target is valid IPv6"
+        IP=$(ipcalc -s "${IP}" | awk '/Full Address:/{ print $NF }')
+        echo "[${SCRIPT_NAME}]: Target IPv6 is expanded to ${IP}"
+      else
+        echo "[${SCRIPT_NAME}]: Error, invalid IP address"
+        exit 1
+      fi
+      # Signature entry is optional. If no signature is supplied, meaning the IP is whitelist as global without signature
+      if [ -z "${SIGNATURE_ID}" ]; then
+        # Have not implement this signature so don't care
+        #echo "[${SCRIPT_NAME}]: Warning, missing signature ID argument. IP will be whitelisted globally without signature filter"
+        SIGNATURE_ID="FALSE"
+        # exit 0
+      fi
+      echo -e "[ip: ${IP} [sid: ${SIGNATURE_ID} [time: $(date -u +%s) [comment: \"${MSG_COMMENT}\"" >>"${MAXIWALL_WHITELISTED_IP_FILE}"
+      RETVAL=$?
+      if [ "${RETVAL}" -eq 0 ]; then
+        echo "[${SCRIPT_NAME}]: Success, IP ${IP} is now in whitelisted file and won't be reported in maxiwall.lua"
+      else
+        echo "[${SCRIPT_NAME}]: Error, when writing IP ${IP} in whitelisted file"
+      fi
+    fi
+
+    exit 0
+    break
+    ;;
+  i | info | check | cip | check-ip | ipinfo | ip-info | cdomain | check-domain | domaininfo | domain-info)
+    SHORT_OPTS="v,d"
+    LONG_OPTS="verbose,debug"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "${SCRIPT_NAME}" -- "$@" 2>&1)
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: $(msg red)Error, ${OPTIONS}$(msg end)"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    VERBOSE=false
+    DEBUG=false
+    while true; do
+      case "$1" in
+      -v | --verbose)
+        VERBOSE=true
+        shift
+        ;;
+      -d | --debug)
+        DEBUG=true
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    check_target "$@"
+    break
+    ;;
+  --)
+    break
+    ;;
+  -*)
+    echo "[${SCRIPT_NAME}]: Invalid action or option $1. Use --help to see the valid options"
+    exit 1
+    ;;
+  *) ;;
+  esac
+  echo "[${SCRIPT_NAME}]: Error, invalid action or option [ $1 ]. Use --help to see the valid actions or options"
+  exit 1
+done
