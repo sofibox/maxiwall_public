@@ -562,6 +562,7 @@ function log()
     logNotice("=== START maxiwall ====")
     -- This is an important sleep function that will reduce suricata alert scan duration
     if maxiwall_ip_alert_sleep_duration >= 0 then
+        logNotice("Notice, maxiwall_ip_alert_sleep_duration is triggered to delay this script for " .. maxiwall_ip_alert_sleep_duration .. " seconds")
         sleep(maxiwall_ip_alert_sleep_duration)
     else
         logNotice("Notice, maxiwall_ip_alert_sleep_duration is disable. Log duration is realtime")
@@ -800,8 +801,10 @@ function log()
                     logNotice("CSF auto block is enable. Blocking IP " .. suspected_ip .. " using CSF ...")
                     local block_comment = "Blocked by MAXIWALL.lua_AIPDB_aipdb_abuse_score [GeoIP: " .. aipdb_isp .. "/" .. aipdb_usage_type .. "/"
                             .. aipdb_domain .. "/" .. aipdb_country_code .. " [AIPDB_Abuse_Score:" .. aipdb_abuse_score
-                            .. "% [Suricata_Alert_Level: " .. suricata_alert_level_label .. " [Inbound_Outbound: " .. src_dst_total_count .. "[Suricata_MSG: " .. msg
-                    csf_block(suspected_ip, block_comment)
+                            .. "% [Suricata_Alert_Level: " .. suricata_alert_level_label .. " [Inbound_Outbound: " .. src_dst_total_count .. " [Suricata_MSG: " .. msg
+                    -- Tell CSF do not remove this IP even if it is reached limit
+                    csf_block(suspected_ip, block_comment .. " #do not delete")
+                    logNotice("CSF blocking status is: " .. csf_block_status)
                 else
                     logNotice("CSF auto block is disabled but this IP has bad rule")
                     csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
@@ -825,8 +828,9 @@ function log()
                     logNotice("CSF auto block is enable. Blocking IP " .. suspected_ip .. " using CSF ...")
                     local block_comment = "Blocked by MAXIWALL.lua_BLCHECK_blcheck&LOG_SCANNER_maxiwall_log_suspicious_count [Blcheck_Reputation_Score:" .. blcheck_reputation_score
                             .. " % [Maxiwall_Log_Suspicious_Score: " .. maxiwall_log_suspicious_score .. " % [Suricata_Alert_Level: " .. suricata_alert_level_label
-                            .. " [Inbound_Outbound: " .. src_dst_total_count .. "[Suricata_MSG: " .. msg
+                            .. " [Inbound_Outbound: " .. src_dst_total_count .. " [Suricata_MSG: " .. msg
                     csf_block(suspected_ip, block_comment)
+                    logNotice("CSF blocking status is: " .. csf_block_status)
                 else
                     logNotice("CSF auto block is disabled but this IP has bad rule")
                     csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
@@ -852,8 +856,9 @@ function log()
                     local block_comment = "Blocked by MAXIWALL.lua_AIPDB_aipdb_abuse_score&BLCHECK_blcheck_blacklisted_count [GeoIP: " .. aipdb_isp .. "/" .. aipdb_usage_type .. "/"
                             .. aipdb_domain .. "/" .. aipdb_country_code .. " [AIPDB_Abuse_Score:" .. aipdb_abuse_score .. " % [Blcheck_Reputation_Score: " .. blcheck_reputation_score
                             .. " % [Suricata_Alert_Level: " .. suricata_alert_level_label
-                            .. " [Inbound_Outbound: " .. src_dst_total_count .. "[Suricata_MSG: " .. msg
+                            .. " [Inbound_Outbound: " .. src_dst_total_count .. " [Suricata_MSG: " .. msg
                     csf_block(suspected_ip, block_comment)
+                    logNotice("CSF blocking status is: " .. csf_block_status)
                 else
                     logNotice("CSF auto block is disabled but this IP has bad rule")
                     csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
@@ -876,8 +881,9 @@ function log()
             if is_csf_enable_auto_block == true then
                 logNotice("CSF auto block is enable. Blocking IP " .. suspected_ip .. " using CSF ...")
                 local block_comment = "Blocked by MAXIWALL.LUA_SURICATA_priority [Alert_Level: " .. suricata_alert_level_label .. " [Inbound_Outbound: " .. src_dst_total_count
-                        .. "[Suricata_MSG: " .. msg
+                        .. " [Suricata_MSG: " .. msg
                 csf_block(suspected_ip, block_comment)
+                logNotice("CSF blocking status is: " .. csf_block_status)
             else
                 logNotice("CSF auto block is disabled but this IP has bad rule")
                 csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
@@ -898,8 +904,9 @@ function log()
                     logNotice("CSF auto block is enable. Blocking IP " .. suspected_ip .. " using CSF ...")
                     local block_comment = "Blocked by MAXIWALL.LUA_LOG_SCANNER_mod_security_alert [Blcheck_Reputation_Score: " .. blcheck_reputation_score
                             .. " % [Mod_Security_Alert: " .. mod_security_alert .. " [Suricata_Alert_Level: " .. suricata_alert_level_label
-                            .. " [Inbound_Outbound: " .. src_dst_total_count .. "[Suricata_MSG: " .. msg
+                            .. " [Inbound_Outbound: " .. src_dst_total_count .. " [Suricata_MSG: " .. msg
                     csf_block(suspected_ip, block_comment)
+                    logNotice("CSF blocking status is: " .. csf_block_status)
                 else
                     logNotice("CSF auto block is disabled but this IP has bad rule")
                     csf_block_status_label_description = "CSF auto block is not set but the bad rule has been triggered for this IP"
@@ -927,6 +934,8 @@ function log()
         -- Increase report count to 1
         report_count = report_count + 1;
     end
+
+    logNotice( "================== END OF LOG (" .. report_count .. ") =================\n\n")
 
 end
 
