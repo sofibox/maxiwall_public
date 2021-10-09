@@ -111,11 +111,6 @@ function send_mail(mail_content, mail_subject)
     if is_maxiwall_enable_mail_report == true then
         logNotice("Global mail report is enabled.")
 
-        -- This will send a lot of email if the downtime is long. So use this only for debugging
-        -- disable enable_api_error_mail when in production
-
-        logNotice("Notice, is_maxiwall_enable_mail_error_report is enabled. Sending log to email " .. maxiwall_report_email)
-
         cmdstr = "mail -s '" .. mail_subject .. "' '" .. maxiwall_report_email .. "' < " .. maxiwall_mail_report_log_path
         exec(cmdstr)
         logNotice("Clearing the mail report log file " .. maxiwall_mail_report_log_path)
@@ -166,9 +161,14 @@ function aipdb_scan(ip)
         logNotice("[AIPDB] Warning, Problem when caching IP address " .. ip .. " from AIPDB: " .. aipdb_ip_cache_status)
 
         if is_maxiwall_enable_mail_error_report == true then
+
+            logNotice("Notice, is_maxiwall_enable_mail_error_report is enabled. Sending log to email")
+
             send_mail("[Maxiwall.lua]: Warning, Maxiwall has detected issue when caching IP address " .. ip .. " from AIPDB: \n"
                     .. "Short error details: " .. aipdb_get_new_ip_cache_status .. "\n"
-                    .. "Run the maxiwall wrapper script with verbose mode (-v) eg: maxiwall cmd -v write-aipdb-cache " .. ip .. " to get full error details why it is failed when caching this IP" .. "\n", "[Maxiwall.lua | Warning]: [AIPDB] Problem when caching IP address " .. ip .. " @ " .. hostname)
+                    .. "Run the maxiwall wrapper script with verbose mode (-v) eg: maxiwall cmd -v write-aipdb-cache " .. ip
+                    .. " to get full error details why it is failed when caching this IP"
+                    .. "\n", "[Maxiwall.lua | Warning]: [AIPDB] Problem when caching IP address " .. ip .. " @ " .. hostname)
         else
             logNotice("Warning, is_maxiwall_enable_mail_error_report is disabled. No email is sent, please read the log instead")
         end
@@ -358,14 +358,14 @@ function maxiwall_log_scan(ip)
     -- usage: maxiwall cmd scanlog <ip>
     get_maxiwall_log_scan_status = tostring(exec_read_line("maxiwall cmd 'scan-log' '" .. ip .. "'"))
 
-    if get_maxiwall_log_scan_status == "error-ip-not-valid" or get_maxiwall_log_scan_status == "error-no-suspicious-log-found" then
-        if is_maxiwall_enable_mail_error_report == true then
-            send_mail("Warning, there is an error when checking IP for suspicious log: \n"
-                    .. "Error details: " .. get_maxiwall_log_scan_status, "[Maxiwall.lua | Warning]: [Maxiwall Log Scanner] Problem when checking for suspicious log for IP " .. ip .. " @ " .. hostname)
-        else
-            logNotice("Warning, is_maxiwall_enable_mail_error_report is disabled. No email is sent, please read the log instead")
-        end
-    end
+    -- if get_maxiwall_log_scan_status == "error-ip-not-valid" or get_maxiwall_log_scan_status == "error-no-suspicious-log-found" then
+    -- if is_maxiwall_enable_mail_error_report == true then
+    --        send_mail("Warning, there is an error when checking IP for suspicious log: \n"
+    --                .. "Error details: " .. get_maxiwall_log_scan_status, "[Maxiwall.lua | Warning]: [Maxiwall Log Scanner] Problem when checking for suspicious log for IP " .. ip .. " @ " .. hostname)
+    --    else
+    --        logNotice("Warning, is_maxiwall_enable_mail_error_report is disabled. No email is sent, please read the log instead")
+    --    end
+    --end
 
 
     -- maxiwall cmd maxiwall-search-ip-log-variable <ip> <field>
@@ -379,8 +379,8 @@ function maxiwall_log_scan(ip)
     if maxiwall_log_attack_category == "no-record" then
         maxiwall_log_attack_category = "0"
     end
-    maxiwall_log_comment = tostring(exec_read_line("maxiwall cmd 'maxiwall-search-ip-log-variable' '" .. ip .. "' 'comment'"))
 
+    maxiwall_log_comment = tostring(exec_read_line("maxiwall cmd 'maxiwall-search-ip-log-variable' '" .. ip .. "' 'comment'"))
 
     -- Debug variable
 
@@ -711,7 +711,9 @@ function log()
             whitelist_ignore_label = "ignore"
         end
 
-        logNotice("Notice, IP : " .. suspected_ip .. " is in " .. whitelist_ignore_label .. " file. Ignoring this IP from reporting in Suricata")
+        logNotice("Notice, IP : " .. suspected_ip .. " is in " .. whitelist_ignore_label .. " file. Ignoring this IP from reporting in Suricata ...")
+    elseif (is_aipdb_enable_rule == true and aipdb_is_whitelisted == true) then
+        logNotice("Notice, AIPDB reported that this IP is in their whitelist database. Ignore this IP from reporting in Suricata ...")
     else
 
         -- Scan CIDR network 24 for CSF
@@ -947,18 +949,19 @@ function log()
                 local report_comment
 
                 report_comment = "[bad_ip: " .. suspected_ip .. " [alert_level: " .. suricata_alert_level_label
-                        .. " [inbound(".. maxiwall_src_ip_total_count ..")+outbound(" .. maxiwall_dst_ip_total_count .. "): " .. tostring(src_dst_total_count)
+                        .. " [inbound(" .. maxiwall_src_ip_total_count .. ")+outbound(" .. maxiwall_dst_ip_total_count .. "): " .. tostring(src_dst_total_count)
                         .. " [target_port: " .. dst_port .. " [suricata_msg: " .. msg
 
                 if is_blcheck_enable_rule == true then
                     logNotice("Notice, is_blcheck_enable_rule is enable so populating the report comment based on the rule ...")
                     report_comment = report_comment .. " [blcheck_ip_score: " .. tostring(blcheck_reputation_score)
-                            .. " [blcheck_domain: " .. blcheck_bl_domain .. " [blcheck_comment: " .. blcheck_comment
+                            .. "% (" .. blcheck_blacklisted_count .. "/" .. blcheck_passed_count .. ") [blcheck_domain: "
+                            .. blcheck_bl_domain:sub(1, 100) .. " [blcheck_comment: " .. blcheck_comment
                 end
 
                 if is_maxiwall_enable_log_rule == true then
                     logNotice("Notice, is_maxiwall_enable_log_rule is enable so populating the report comment based on the rule ...")
-                    report_comment = report_comment .. " [log_suspicious_score: " .. tostring(maxiwall_log_suspicious_score) .. "[mod_security_alert: " .. tostring(maxiwall_log_mod_security_alert)
+                    report_comment = report_comment .. " [log_suspicious_score: " .. tostring(maxiwall_log_suspicious_score) .. "% [mod_security_alert: " .. tostring(maxiwall_log_mod_security_alert)
                 end
 
                 if report_comment ~= nil or report_comment ~= "" then
