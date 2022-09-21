@@ -1,17 +1,15 @@
 #!/bin/bash
 # ==================================================
 _APP_SPECIFIC_NAME="Maxiwall"
-_APP_VERSION="0.3"
+_APP_VERSION="0.4"
 _APP_STATUS="beta"
 _APP_INFO="${_APP_SPECIFIC_NAME} (maxiwall) is bash script to manage CSF, AbuseIPDB and Suricata
 with extra features. This script is also a wrapper to manage suricata .lua report with IPS capability"
 _APP_VERSION_STATUS="${_APP_VERSION}-${_APP_STATUS}"
 _AUTHOR="Author: Arafat Ali | Email: arafat@sofibox.com | (C) 2019-2021"
 # ====================================================
-
 # This script works best with suricata + maxiwall.lua at code/lua-output/maxiwall.lua
 
-# Watch the log file
 usage() {
   local usage_file
   usage_file="${SCRIPT_PATH}/readme.txt"
@@ -1989,9 +1987,45 @@ while [ "$#" -gt 0 ]; do
     exit 0
     break
     ;;
+  init-full)
+    _confirm "Warning, this action will clear all csf.deny including the '#do not delete' entries! [y/n]? "
+    # TODO add testing APIDBCHECK URL AIPDB_REPORT_URL for 200 status
+    echo "[${SCRIPT_NAME}]: Stopping suricata.service ..."
+    systemctl stop suricata
+    # Update script here
+    echo ""
+    update_scripts
+    echo ""
+    echo "[${SCRIPT_NAME}]: Clear all suricata log files ..."
+    rm -rf /var/log/suricata/*
+    echo ""
+    clear_database_cache
+    # TODO only enable below when in production because this is so slow
+    echo ""
+    echo -n "[${SCRIPT_NAME}]: Updating suricata rule sources ..."
+    suricata-update update-sources
+    echo ""
+    echo -n "[${SCRIPT_NAME}]: Updating suricata rule definition ..."
+    suricata-update 2>&1 | grep -v 'Found duplicate rule SID'
+    echo ""
+    # Clear CSF
+    cp "${CODE_PATH}/etc/csf/csf.deny_empty" "${CSF_IP_PERMANENT_BLOCK_FILE}"
+    check_status "$?"
+    echo "[${SCRIPT_NAME}]: Flushing csf.deny ..."
+    csf -df >/dev/null
+    check_status "$?"
+    echo "[${SCRIPT_NAME}]: Restarting CSF and LFD ..."
+    csf -ra >/dev/null
+    check_status "$?"
+    echo ""
+    echo "[${SCRIPT_NAME}]: Starting suricata.service ..."
+    systemctl start suricata
+    exit 0
+    break
+    ;;
   clear-csf | csf-clear | clear-csf-ip)
+    _confirm "Warning, this will clear all csf.deny including the '#do not delete' entries! [y/n]?"
     echo "[${SCRIPT_NAME}]: Copying csf.deny_empty into ${CSF_IP_PERMANENT_BLOCK_FILE} ..."
-    _confirm "Warning, this will clear all csf.deny including the '#do not delete' entries!"
     cp "${CODE_PATH}/etc/csf/csf.deny_empty" "${CSF_IP_PERMANENT_BLOCK_FILE}"
     check_status "$?"
     echo "[${SCRIPT_NAME}]: Flushing csf.deny ..."
@@ -2007,7 +2041,8 @@ while [ "$#" -gt 0 ]; do
   add-extra-rules)
     echo "Enabling suricata 3rd party rules ..."
     suricata-update enable-source sslbl/ssl-fp-blacklist
-    suricata-update enable-source ptresearch/attackdetection
+    # This source is obsolete
+    # suricata-update enable-source ptresearch/attackdetection
     suricata-update enable-source etnetera/aggressive
     suricata-update enable-source oisf/trafficid
     suricata-update enable-source sslbl/ja3-fingerprints
