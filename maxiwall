@@ -1025,6 +1025,11 @@ init_config() {
   get_status_message "$?"
   echo ""
 
+  echo "[${caller}]: Copying ${SCRIPT_PATH}/${SCRIPT_NAME}.conf.sample into ${CONFIG_FILE} ..."
+  cp -f "${SCRIPT_PATH}/${SCRIPT_NAME}.conf.sample" "${CONFIG_FILE}"
+  get_status_message "$?"
+  echo ""
+
   # Make sure maxiwall.lua is executable
   echo "[${caller}]: Making sure ${MAXIWALL_LUA_SCRIPT} is executable ..."
   chmod +x "${MAXIWALL_LUA_SCRIPT}"
