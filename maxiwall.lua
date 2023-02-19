@@ -74,7 +74,7 @@ end
 function csf_block(ip, comment)
     local get_csf_block_status
     echo("START CSF BLOCK")
-    echo ("Blocking " .. ip .. " with comment " .. comment .. "")
+    echo("Blocking " .. ip .. " with comment " .. comment .. "")
 
     if to_boolean(exec_read_line("maxiwall getenv SURICATA_ENABLE_CSF_BLOCK")) == true then
         -- This is the command to block IP
@@ -95,22 +95,18 @@ function csf_block(ip, comment)
 end
 
 -- TODO check this function
-function aipdb_report(ip,category,comment)
+function aipdb_report(ip, category, comment)
     local get_aipdb_report_status
     echo("START AIPDB REPORT")
-    echo ("Reporting " .. ip .. " with category " .. category .. " and comment " .. comment .. "")
+    echo("Reporting " .. ip .. " with category " .. category .. " and comment " .. comment .. "")
 
     if to_boolean(exec_read_line("maxiwall getenv ABUSEIPDB_ENABLE_WEB_REPORT")) == true then
         -- This is the command to report IP
         get_aipdb_report_status = tostring(exec_read_line("maxiwall report-ip --ip-address='" .. ip .. "' --category='" .. category .. "' --comment='" .. comment .. "'"))
-        if get_aipdb_report_status == "error-no-dns-record" then
-            echo("AIPDB report failed, no DNS record found for " .. ip)
-        elseif get_aipdb_report_status == "ip-already-reported" then
-            echo("AIPDB report failed, " .. ip .. " is already reported")
-        elseif get_aipdb_report_status == "ok-ip-report-success" then
+        if get_aipdb_report_status == "success" then
             echo("AIPDB report success, " .. ip .. " is reported")
         else
-            echo("error-ip-report-failed")
+            echo("AIPDB report failed, " .. ip .. " is not reported")
         end
     else
         echo("Warning, AIPDB report is disabled!")
@@ -380,7 +376,7 @@ function log()
         -- This is the command to block IP
         csf_block(suspected_ip, csf_block_comment)
 
-
+        aipdb_report(suspected_ip, alert_categories, csf_block_comment)
     end
 
     echo("This is suricata alert IP information:")

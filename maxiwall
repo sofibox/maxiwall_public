@@ -21,6 +21,48 @@ traps() {
   done
 }
 
+maxiwall_debug_exit() {
+  local retval caller
+  caller="$(basename -- "$0")->${FUNCNAME[0]}"
+  ((CTRL_C_COUNT++))
+  if [[ $CTRL_C_COUNT == 1 ]]; then
+    local signal
+    signal="$1"
+    echo ""
+    if [ "${signal}" == "INT" ]; then
+      echo "[${caller}]: *** Suricata debug mode has been terminated by ${USER}! ***"
+      echo ""
+    fi
+  fi
+
+  # Restore suricata.yaml
+  echo "[${caller}]: Restoring suricata.yaml ..."
+  yq eval --inplace '.rule-files = ["suricata.rules", "/usr/local/maxicode/maxiwall/maxiwall.rules"]' "${SURICATA_YAML}"
+  retval="$?"
+  if [[ "${retval}" -eq 0 ]]; then
+    echo "[${caller}]: suricata.yaml restored successfully."
+  else
+    echo "[${caller}]: Error, suricata.yaml restore failed."
+  fi
+
+  echo ""
+
+  # Starting suricata
+  echo "[${caller}]: Starting suricata.service ..."
+  systemctl restart suricata
+  retval="$?"
+  if [[ "${retval}" -eq 0 ]]; then
+    echo "[${caller}]: suricata.service started successfully."
+  else
+    echo "[${caller}]: Error, suricata.service start failed."
+  fi
+  echo ""
+  echo "                             **END DEBUG**                        "
+  echo "=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~"
+
+  exit 1
+}
+
 # This function is used by traps() function to clean exit
 exit_script() {
   ((CTRL_C_COUNT++))
@@ -738,12 +780,23 @@ report_target() {
   local caller target
 
   caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
-  target=$(resolve "${TARGET}")
+  target_ip=$(resolve "${TARGET}")
+  report_category="${CATEGORIES}"
+  report_comment="${COMMENTS}"
 
   # TODO use aipdb website to send report
 
+  # Check if ABUSEIPDB_ENABLE_WEB_REPORT is set to true
 
-
+  if [ "${ABUSEIPDB_ENABLE_WEB_REPORT}" = true ]; then
+    if command -v aipdb >/dev/null 2>&1; then
+      aipdb report --ip-address="${target_ip}" --categories="${report_category}" --comment="${report_comment}" --scripting
+    else
+      error "aipdb-command-not-found"
+    fi
+  else
+    error "abuseipdb-web-report-disabled"
+  fi
 
 }
 
@@ -951,15 +1004,35 @@ status() {
 }
 
 init_config() {
+  local caller
+  caller="$(basename -- "$0")->${FUNCNAME[0]}"
+
+  # Stop suricata
+  echo "[${caller}]: Stopping suricata ..."
+  systemctl stop suricata
+  get_status_message "$?"
+  echo ""
 
   # Adding maxiwall.lua to suricata.yaml (only one file at this moment)
-  echo "[${caller}]: Adding /usr/local/maxicode/maxiwall/maxiwall.lua script ..."
-  yq eval --inplace '.outputs[] |= (select(has("lua")).lua."scripts" = ["/usr/local/maxicode/maxiwall/maxiwall.lua"] | .)' /etc/suricata/suricata.yaml
+  echo "[${caller}]: Adding maxiwall.lua script ..."
+  yq eval --inplace '.outputs[] |= (select(has("lua")).lua."scripts" = ["maxiwall.lua"] | .)' /etc/suricata/suricata.yaml
+  get_status_message "$?"
+  echo ""
+
+  # Copying maxiwall.lua into MAXIWALL_LUA_SCRIPT
+  echo "[${caller}]: Copying ${SCRIPT_PATH}/maxiwall.lua into ${MAXIWALL_LUA_SCRIPT} ..."
+  cp -f "${SCRIPT_PATH}/maxiwall.lua" "${MAXIWALL_LUA_SCRIPT}"
+  get_status_message "$?"
+  echo ""
+
+  # Make sure maxiwall.lua is executable
+  echo "[${caller}]: Making sure ${MAXIWALL_LUA_SCRIPT} is executable ..."
+  chmod +x "${MAXIWALL_LUA_SCRIPT}"
   get_status_message "$?"
   echo ""
 
   echo "[${caller}]: Removing all existing rules from suricata.yaml and leaving suricata.rules and /usr/local/maxicode/maxiwall/maxiwall.rules ..."
-  jq eval --inplace '.rule-files = ["suricata.rules", "/usr/local/maxicode/maxiwall/maxiwall.rules"]' /etc/suricata/suricata.yaml
+  yq eval --inplace '.rule-files = ["suricata.rules", "/usr/local/maxicode/maxiwall/maxiwall.rules"]' /etc/suricata/suricata.yaml
   get_status_message "$?"
   echo ""
 
@@ -981,15 +1054,9 @@ init_config() {
   get_status_message "$?"
   echo ""
 
-  # Copying maxiwall.lua into MAXIWALL_LUA_SCRIPT
-  echo "[${caller}]: Copying ${SCRIPT_PATH}/maxiwall.lua into ${MAXIWALL_LUA_SCRIPT} ..."
-  cp -f "${SCRIPT_PATH}/maxiwall.lua" "${MAXIWALL_LUA_SCRIPT}"
-  get_status_message "$?"
-  echo ""
-
-  # Make sure maxiwall.lua is executable
-  echo "[${caller}]: Making sure ${MAXIWALL_LUA_SCRIPT} is executable ..."
-  chmod +x "${MAXIWALL_LUA_SCRIPT}"
+  # Clear suricata log file
+  echo "[${caller}]: Clearing suricata log file ..."
+  echo "" >"${SURICATA_LOG_FILE}"
   get_status_message "$?"
   echo ""
 
@@ -999,21 +1066,44 @@ init_config() {
   get_status_message "$?"
   echo ""
 
-  # Checking whether suricata log file is free from a warning line ...
-  echo "[${caller}]: Checking whether suricata log file is free from a warning line before a message All AFP capture threads are running ..."
+  local wait_count=0
+  echo "[${caller}]: Waiting for suricata engine to start capturing data ..."
   while ! grep -q "All AFP capture threads are running" "${SURICATA_LOG_FILE}"; do
-    if grep -q "<Warning>" "${SURICATA_LOG_FILE}"; then
-      echo "Suricata log file contains a warning line. Please check the log file and fix the issue."
+    sleep 1
+    ((wait_count++))
+    if [ "${wait_count}" -gt 30 ]; then
+      echo "Suricata is not capturing for more than ${wait_count}. Please check the log file and fix the issue."
       exit 1
     fi
   done
 
+  echo ""
+
+  # Checking whether suricata log file is free from a warning line ...
+  echo "[${caller}]: Checking whether suricata log file is free from a warning line before a message All AFP capture threads are running ..."
+
+  if grep -q "<Warning>" "${SURICATA_LOG_FILE}"; then
+    echo "Suricata log file contains a warning line. Please check the log file and fix the issue."
+    exit 1
+  else
+    echo "Suricata log file is free from a warning line."
+  fi
+  echo ""
+
+  echo "Checking suricata status ..."
+  systemctl status suricata.service | cat
+  echo ""
+
 }
 
 test_config() {
+  local caller
+  caller="$(basename -- "$0")->${FUNCNAME[0]}"
+  traps maxiwall_debug_exit INT
   # Stopping suricata
   echo "[${SCRIPT_NAME}]: Stopping suricata.service ..."
   systemctl stop suricata
+  echo ""
 
   # Remove all existing rules from suricata.yaml
   echo "[${caller}]: Setting suricata.yaml to use test rules file ..."
@@ -1021,20 +1111,10 @@ test_config() {
   get_status_message "$?"
   echo ""
 
-  echo "[${SCRIPT_NAME}]: Running suricata in test mode ..."
-  suricata -v -c "${SURICATA_TEST}" -i eth0 --init-errors-fatal
-
-  # Restore suricata.yaml
-  echo "[${caller}]: Restoring suricata.yaml ..."
-  yq eval --inplace '.rule-files = ["suricata.rules", "/usr/local/maxicode/maxiwall/maxiwall.rules"]' "${SURICATA_YAML}"
-  get_status_message "$?"
-  echo ""
-
-  # Starting suricata
-  echo "[${SCRIPT_NAME}]: Starting suricata.service ..."
-  systemctl restart suricata
-  get_status_message "$?"
-  echo ""
+  echo "[${caller}]: Running suricata in test mode ..."
+  echo "[${caller}]: Please run the following telnet command in another terminal to generate test traffic:"
+  echo "telnet <localhost>"
+  suricata -v -c "${SURICATA_YAML}" -i eth0 --init-errors-fatal
 }
 
 ############################
@@ -1075,7 +1155,7 @@ MAXIWALL_RULES_FILE="${SCRIPT_PATH}/maxiwall.rules"
 TEST_RULES_FILE="${SCRIPT_PATH}/maxiwall-test.rules"
 
 SHORT_OPT_SPECS=":hvsc:t:-:"
-LONG_OPT_SPECS=(["config"]=1 ["ip"]=1 ["ip-address"]=1 ["domain"]=1 ["domain-name"]=1 ["target"]=1 ["input-file"]=1 ["netmask"]=1 ["categories"]=1 ["comment"]=1 ["comments"]=1)
+LONG_OPT_SPECS=(["config"]=1 ["ip"]=1 ["ip-address"]=1 ["domain"]=1 ["domain-name"]=1 ["target"]=1 ["input-file"]=1 ["netmask"]=1 ["category"]=1 ["categories"]=1 ["comment"]=1 ["comments"]=1)
 INDEX=$(($# + 1))
 
 ACTION="$1"
@@ -1315,7 +1395,11 @@ elif [[ "${ACTION^^}" == +(BLOCK-TARGET|BLOCK-IP|DENY-IP|DENY-TARGET) ]]; then
   block_target "$@"
   RETVAL=$?
   exit ${RETVAL}
-
+elif [[ "${ACTION^^}" == +(REPORT-TARGET|REPORT-IP) ]]; then
+  read_config
+  report_target "$@"
+  RETVAL=$?
+  exit ${RETVAL}
 else
   echo "[${SCRIPT_NAME}]: Error, unknown action '${ACTION}'. Please provide a valid action (eg: ${SCRIPT_NAME} +<action> *<option>)"
   exit 1
