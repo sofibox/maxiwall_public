@@ -1025,10 +1025,14 @@ init_config() {
   get_status_message "$?"
   echo ""
 
-  echo "[${caller}]: Copying ${SCRIPT_PATH}/${SCRIPT_NAME}.conf.sample into ${CONFIG_FILE} ..."
-  cp -f "${SCRIPT_PATH}/${SCRIPT_NAME}.conf.sample" "${CONFIG_FILE}"
-  get_status_message "$?"
-  echo ""
+  if [ ! -f "${SCRIPT_PATH}/${SCRIPT_NAME}.conf" ]; then
+    # Copying maxiwall.conf.sample into CONFIG_FILE
+    echo "[${caller}]: Copying ${SCRIPT_PATH}/${SCRIPT_NAME}.conf.sample into ${CONFIG_FILE} ..."
+    cp -f "${SCRIPT_PATH}/${SCRIPT_NAME}.conf.sample" "${SCRIPT_PATH}/${SCRIPT_NAME}.conf"
+    get_status_message "$?"
+    echo ""
+  fi
+
 
   # Make sure maxiwall.lua is executable
   echo "[${caller}]: Making sure ${MAXIWALL_LUA_SCRIPT} is executable ..."
