@@ -72,13 +72,14 @@ function exit(code)
 end
 
 function csf_block(ip, comment)
-    local get_csf_block_status
+    local get_csf_block_status, cmd_string
     echo("START CSF BLOCK")
-    echo("Blocking " .. ip .. " with comment " .. comment .. "")
 
     if to_boolean(exec_read_line("maxiwall getenv SURICATA_ENABLE_CSF_BLOCK")) == true then
+        cmd_string = "maxiwall block-ip --ip-address='" .. ip .. "' --comment='" .. comment .. "' --scripting"
         -- This is the command to block IP
-        get_csf_block_status = tostring(exec_read_line("maxiwall block-ip --ip-address='" .. ip .. "' --comment'" .. comment .. "'"))
+        echo("Blocking command string: " .. cmd_string)
+        get_csf_block_status = tostring(exec_read_line(cmd_string))
         if get_csf_block_status == "error-no-dns-record" then
             echo("CSF block failed, no DNS record found for " .. ip)
         elseif get_csf_block_status == "ip-already-blocked" then
@@ -94,16 +95,17 @@ function csf_block(ip, comment)
     echo("END CSF BLOCK")
 end
 
--- TODO check this function
 function aipdb_report(ip, category, comment)
-    local get_aipdb_report_status
+    local get_aipdb_report_status, cmd_string
     echo("START AIPDB REPORT")
     echo("Reporting " .. ip .. " with category " .. category .. " and comment " .. comment .. "")
 
     if to_boolean(exec_read_line("maxiwall getenv ABUSEIPDB_ENABLE_WEB_REPORT")) == true then
+        cmd_string = "maxiwall report-ip --ip-address='" .. ip .. "' --category='" .. category .. "' --comment='" .. comment .. "' --scripting"
         -- This is the command to report IP
-        get_aipdb_report_status = tostring(exec_read_line("maxiwall report-ip --ip-address='" .. ip .. "' --category='" .. category .. "' --comment='" .. comment .. "'"))
-        if get_aipdb_report_status == "success" then
+        echo("Reporting command string: " .. cmd_string)
+        get_aipdb_report_status = tostring(exec_read_line(cmd_string))
+        if get_aipdb_report_status == "ok-report-sent" then
             echo("AIPDB report success, " .. ip .. " is reported")
         else
             echo("AIPDB report failed, " .. ip .. " is not reported")
@@ -143,16 +145,8 @@ function log()
     local sleep_duration
     local time_string, rule_sid, rule_rev, rule_gid, ip_version, src_ip, dst_ip, protocol, src_port, dst_port, msg, class, priority, suricata_alert_level
     local mod_security_scan_result, aipdb_scan_result, blcheck_scan_result, csf_scan_result, greynoise_scan_result, virustotal_scan_result
-    local alert_categories, ip_score_label, alert_label
+    local alert_categories, ip_score_label, ip_report, ip_report_comment
     local csf_block_comment
-
-    -- Sleep for specified duration in seconds
-    sleep_duration = to_number(exec_read_line("maxiwall getenv MAXIWALL_OUTPUT_SLEEP_RATE"))
-
-    if sleep_duration > 0 then
-        echo("Sleeping for " .. sleep_duration .. " seconds", "info")
-        sleep(sleep_duration)
-    end
 
     -- Obtain the timestring value from suricata function
     time_string = SCPacketTimeString()
@@ -323,52 +317,66 @@ function log()
     -- Populate blocking ip_score_label (give aipdb_scan highest priority)
     if to_number(aipdb_scan_result) >= 80 then
         ip_score_label = "bad"
-
         csf_block_comment = "Blocked by Suricata->AbuseIPDB_score: " .. aipdb_scan_result .. ""
-
-        if (to_number(aipdb_scan_result) == 100) then
-            csf_block_comment = tostring(csf_block_comment) .. " # do not delete"
-        end
-        -- This is the command to block IP
-        csf_block(suspected_ip, csf_block_comment)
 
     end
 
     if (priority == 1) or (priority == 2) then
         ip_score_label = "bad"
+        ip_report = true
         if csf_block_comment == nil then
             csf_block_comment = "Blocked by Suricata->Alert_Level: " .. suricata_alert_level .. " "
         else
-            csf_block_comment = tostring(csf_block_comment) .. " # | Suricata->Priority_number: " .. suricata_alert_level .. " "
+            csf_block_comment = tostring(csf_block_comment) .. " [Suricata->Priority_number: " .. suricata_alert_level .. " "
         end
-
     end
 
     if greynoise_scan_result == "malicious" then
         ip_score_label = "bad"
+        ip_report = true
         if csf_block_comment == nil then
             csf_block_comment = "Blocked by Suricata->GreyNoise_scan: " .. greynoise_scan_result .. " "
         else
-            csf_block_comment = tostring(csf_block_comment) .. " | Greynoise: " .. greynoise_scan_result .. " "
+            csf_block_comment = tostring(csf_block_comment) .. " [Greynoise: " .. greynoise_scan_result .. " "
+        end
+
+        if ip_report_comment == nil then
+            ip_report_comment = " [greynoise: " .. greynoise_scan_result .. " "
+        else
+            ip_report_comment = tostring(ip_report_comment) .. " [greynoise: " .. greynoise_scan_result .. " "
         end
 
     end
 
     if virustotal_scan_result == "malicious" then
         ip_score_label = "bad"
+        ip_report = true
         if csf_block_comment == nil then
             csf_block_comment = "Blocked by Suricata->VirusTotal_scan: " .. virustotal_scan_result .. " "
         else
-            csf_block_comment = tostring(csf_block_comment) .. " | Virustotal: " .. virustotal_scan_result .. " "
+            csf_block_comment = tostring(csf_block_comment) .. " [Virustotal: " .. virustotal_scan_result .. " "
+        end
+
+        if ip_report_comment == nil then
+            ip_report_comment = " [virustotal: " .. virustotal_scan_result .. " "
+        else
+            ip_report_comment = tostring(ip_report_comment) .. " [virustotal: " .. virustotal_scan_result .. " "
         end
     end
 
-    if mod_security_scan_result == "found" then
+    if mod_security_scan_result == "ip-found" then
         ip_score_label = "bad"
+        ip_report = true
         if csf_block_comment == nil then
             csf_block_comment = "Blocked by Suricata->ModSecurity_scan: " .. mod_security_scan_result .. " "
         else
-            csf_block_comment = tostring(csf_block_comment) .. " | ModSecurity: " .. mod_security_scan_result .. " "
+            csf_block_comment = tostring(csf_block_comment) .. " [ModSecurity: " .. mod_security_scan_result .. " "
+        end
+
+        if ip_report_comment == nil then
+            ip_report_comment = " [modsecurity: " .. mod_security_scan_result .. " "
+        else
+            ip_report_comment = tostring(ip_report_comment) .. " [modsecurity: " .. mod_security_scan_result .. " "
         end
     end
 
@@ -376,7 +384,16 @@ function log()
         -- This is the command to block IP
         csf_block(suspected_ip, csf_block_comment)
 
-        aipdb_report(suspected_ip, alert_categories, csf_block_comment)
+        if ip_report == true then
+
+            -- Add extra header and copyright to the ip_report_comment before reporting
+            if ip_report_comment ~= nil then
+                ip_report_comment = "[bad_ip: " .. suspected_ip .. ":" .. src_port .. " [alert_level: " .. suricata_alert_level .. " [target_port: " .. dst_port .. " [class: " .. class .. " [msg: " .. msg .. tostring(ip_report_comment) .. " [cidr_net24: " .. csf_cidr_scan_result .. " [(C) Arafat Ali @ arafatx.com"
+            end
+            -- This is the command to add IP to aipdb block list
+            aipdb_report(suspected_ip, alert_categories, ip_report_comment)
+        end
+
     end
 
     echo("This is suricata alert IP information:")
@@ -419,9 +436,20 @@ function log()
     --report_file:write(s)
     --report_file:flush()
 
+    -- Sleep for specified duration in seconds
+
+
     report_count = report_count + 1
-    -- Print the alert.log report count
-    echo("END OF ALERT LOG REPORT #" .. tostring(alert_log_count))
+
+    sleep_duration = to_number(exec_read_line("maxiwall getenv MAXIWALL_OUTPUT_SLEEP_RATE"))
+
+    if sleep_duration > 0 then
+        echo("Sleeping for " .. sleep_duration .. " seconds", "info")
+        sleep(sleep_duration)
+    end
+
+    echo ("----------------------END-------------------------")
+
 end
 
 -- This is the function that is called when the fast.lua is closed

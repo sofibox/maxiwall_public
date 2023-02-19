@@ -686,10 +686,10 @@ get_modsecurity_score() {
 
   if [ -n "${result}" ]; then
     [[ "${VERBOSE}" -ge 0 ]] && echo "IP address ${target_ip} found in modsecurity log"
-    [[ "${VERBOSE}" -lt 0 ]] && echo "found"
+    [[ "${VERBOSE}" -lt 0 ]] && echo "ip-found"
   else
     [[ "${VERBOSE}" -ge 0 ]] && echo "IP address ${target_ip} not found in modsecurity log"
-    [[ "${VERBOSE}" -lt 0 ]] && echo "not found"
+    [[ "${VERBOSE}" -lt 0 ]] && echo "ip-not-found"
   fi
 
 }
@@ -732,6 +732,8 @@ get_dabfm_score() {
 }
 
 # At this moment use CSF to block target
+# Scripting value:
+# error-no-dns-record, ip-already-blocked, ok-ip-block-success, error-ip-block-failed
 block_target() {
   local caller target
 
@@ -749,8 +751,7 @@ block_target() {
     exit 1
   fi
 
-  [[ "${VERBOSE}" -ge 0 ]] && echo "[${SCRIPT_NAME}]: Using target ${target}, resolved to IP ${ip}"
-
+  [[ "${VERBOSE}" -ge 0 ]] && echo "[${SCRIPT_NAME}]: Using target ${TARGET}, Blocking IP ${target_ip}, with comment \"${block_msg}\" ..."
   # This will check if the existing IP has been blocked before (works with IPv6 and IPv4)
   csf_ip_previous_block_status=$(csf -g "${target_ip}" | grep -E 'IPSET: Set:chain_DENY Match:|IPSET: Set:chain_6_DENY Match:')
 
@@ -784,13 +785,19 @@ report_target() {
   report_category="${CATEGORIES}"
   report_comment="${COMMENTS}"
 
-  # TODO use aipdb website to send report
-
   # Check if ABUSEIPDB_ENABLE_WEB_REPORT is set to true
 
   if [ "${ABUSEIPDB_ENABLE_WEB_REPORT}" = true ]; then
     if command -v aipdb >/dev/null 2>&1; then
-      aipdb report --ip-address="${target_ip}" --categories="${report_category}" --comment="${report_comment}" --scripting
+      local get_aipdb_report
+      get_aipdb_report=$(aipdb report --ip-address="${target_ip}" --categories="${report_category}" --comment="${report_comment}" --scripting)
+      if [ "${get_aipdb_report}" = "success" ]; then
+        [[ "${VERBOSE}" -ge 0 ]] && echo "Report sent to AbuseIPDB"
+        [[ "${VERBOSE}" -lt 0 ]] && echo "ok-report-sent"
+      else
+        [[ "${VERBOSE}" -ge 0 ]] && echo "Error sending report to AbuseIPDB"
+        [[ "${VERBOSE}" -lt 0 ]] && echo "error-report-not-sent"
+      fi
     else
       error "aipdb-command-not-found"
     fi
@@ -894,6 +901,18 @@ edit_file() {
     else
       error "No editor found"
     fi
+  else
+    error "File ${file} does not exist"
+  fi
+
+}
+
+# Show file using tail with 100 lines
+show_file() {
+  local file="$1"
+  if [ -f "${file}" ]; then
+    info 1 "Showing file ${file}"
+    tail -f -n 100 "${file}"
   else
     error "File ${file} does not exist"
   fi
@@ -1032,7 +1051,6 @@ init_config() {
     get_status_message "$?"
     echo ""
   fi
-
 
   # Make sure maxiwall.lua is executable
   echo "[${caller}]: Making sure ${MAXIWALL_LUA_SCRIPT} is executable ..."
@@ -1325,32 +1343,55 @@ elif [[ "${ACTION^^}" == +(--RESTART|RESTART) ]]; then
   exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(GET-SCRIPT-PATH|SCRIPT-PATH) ]]; then
   echo "${SCRIPT_PATH}"
-  exit "$?"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(GET-OUTPUT-PATH|OUTPUT-PATH) ]]; then
   echo "${OUTPUT_PATH}"
-  exit "$?"
+  RETVAL=$?
+  exit ${RETVAL}
+elif [[ "${ACTION^^}" == +(SHOW-SURICATA-LOG|SHOW-LOG) ]]; then
+  show_file "${SURICATA_LOG_FILE}"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(EDIT-LUA-SCRIPT|EDIT-LUA) ]]; then
-  edit_file "${MAXIWALL_LUA_SCRIPT}"
+  edit_file "${SCRIPT_PATH}/maxiwall.lua"
+  RETVAL=$?
+  exit ${RETVAL}
+
 elif [[ "${ACTION^^}" == +(EDIT-SURICATA-RULE|EDIT-SURICATA-RULES) ]]; then
   edit_file "${SURICATA_RULES_FILE}"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(EDIT-MAXIWALL-RULE|EDIT-MAXIWALL-RULES|EDIT-RULE|EDIT-RULES) ]]; then
   edit_file "${MAXIWALL_RULES_FILE}"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(EDIT) ]]; then
   edit_file "${SCRIPT_PATH}/${SCRIPT_NAME}"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(EDIT-TEST-RULE) ]]; then
   edit_file "${TEST_RULES_FILE}"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(DEBUG-LOG) ]]; then
   cat /dev/null >"${SURICATA_LOG_FILE}"
   systemctl restart suricata
   tail -f "${SURICATA_LOG_FILE}"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(TEST-RULE|TEST-RULES) ]]; then
   test_config "$@"
   RETVAL=$?
   exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(EDIT-MAXIWALL-CONFIG|EDIT-CONFIG) ]]; then
   edit_file "${CONFIG_FILE}"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(EDIT-SURICATA-CONFIG|EDIT-SURICATA-YAML) ]]; then
   edit_file "${SURICATA_YAML}"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(GET-PUBLIC-IPV4) ]]; then
   get_public_ipv4 "$@"
   RETVAL=$?
