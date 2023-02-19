@@ -94,6 +94,30 @@ function csf_block(ip, comment)
     echo("END CSF BLOCK")
 end
 
+-- TODO check this function
+function aipdb_report(ip,category,comment)
+    local get_aipdb_report_status
+    echo("START AIPDB REPORT")
+    echo ("Reporting " .. ip .. " with category " .. category .. " and comment " .. comment .. "")
+
+    if to_boolean(exec_read_line("maxiwall getenv ABUSEIPDB_ENABLE_WEB_REPORT")) == true then
+        -- This is the command to report IP
+        get_aipdb_report_status = tostring(exec_read_line("maxiwall report-ip --ip-address='" .. ip .. "' --category='" .. category .. "' --comment='" .. comment .. "'"))
+        if get_aipdb_report_status == "error-no-dns-record" then
+            echo("AIPDB report failed, no DNS record found for " .. ip)
+        elseif get_aipdb_report_status == "ip-already-reported" then
+            echo("AIPDB report failed, " .. ip .. " is already reported")
+        elseif get_aipdb_report_status == "ok-ip-report-success" then
+            echo("AIPDB report success, " .. ip .. " is reported")
+        else
+            echo("error-ip-report-failed")
+        end
+    else
+        echo("Warning, AIPDB report is disabled!")
+    end
+    echo("END AIPDB REPORT")
+end
+
 
 -- This is an initialization function required by Suricata to specify which data needs to be displayed.
 -- We are particularly interested in packets that generate alerts.
@@ -355,7 +379,10 @@ function log()
     if ip_score_label == "bad" then
         -- This is the command to block IP
         csf_block(suspected_ip, csf_block_comment)
+
+
     end
+
     echo("This is suricata alert IP information:")
     echo("---------------------START------------------------")
     echo("Suspected IP: " .. suspected_ip)

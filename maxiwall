@@ -186,7 +186,7 @@ error() {
 }
 
 # Handling script simple status
-check_status() {
+get_status_message() {
   local retval
   retval="$1"
   if [[ "${retval}" -eq 0 ]]; then
@@ -689,6 +689,7 @@ get_dabfm_score() {
 
 }
 
+# At this moment use CSF to block target
 block_target() {
   local caller target
 
@@ -730,6 +731,20 @@ block_target() {
       exit 1
     fi
   fi
+}
+
+# At this moment use aipdb website to send report
+report_target() {
+  local caller target
+
+  caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
+  target=$(resolve "${TARGET}")
+
+  # TODO use aipdb website to send report
+
+
+
+
 }
 
 # This only work with IPv4. IPv6 is not supported yet
