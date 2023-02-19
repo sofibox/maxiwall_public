@@ -1072,10 +1072,11 @@ init_config() {
     sleep 1
     ((wait_count++))
     if [ "${wait_count}" -gt 30 ]; then
-      echo "Suricata is not capturing for more than ${wait_count}. Please check the log file and fix the issue."
+      echo "[${caller}]: Suricata is not capturing for more than ${wait_count}. Please check the log file and fix the issue."
       exit 1
     fi
   done
+  echo "[${caller}]: OK. Suricata is capturing data."
 
   echo ""
 
@@ -1092,6 +1093,7 @@ init_config() {
 
   echo "Checking suricata status ..."
   systemctl status suricata.service | cat
+  get_status_message "$?"
   echo ""
 
 }
