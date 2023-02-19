@@ -60,7 +60,7 @@ maxiwall_debug_exit() {
   echo "                             **END DEBUG**                        "
   echo "=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~"
 
-  exit 1
+  exit
 }
 
 # This function is used by traps() function to clean exit
@@ -74,7 +74,7 @@ exit_script() {
     fi
   fi
   # clean exit
-  exit 1
+  exit
 }
 
 # This function is used to display the main help message from readme file.
