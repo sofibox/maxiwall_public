@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==================================================
 _APP_SPECIFIC_NAME="Maxiwall"
-_APP_VERSION="0.5"
+_APP_VERSION="0.6"
 _APP_STATUS="beta"
 _APP_INFO="${_APP_SPECIFIC_NAME} (maxiwall) is bash script to manage CSF, AbuseIPDB and Suricata
 with extra features. This script is also a wrapper to manage suricata .lua report with IPS capability"
@@ -935,6 +935,93 @@ status() {
 
 }
 
+init_config() {
+
+  # Adding maxiwall.lua to suricata.yaml (only one file at this moment)
+  echo "[${caller}]: Adding /usr/local/maxicode/maxiwall/maxiwall.lua script ..."
+  yq eval --inplace '.outputs[] |= (select(has("lua")).lua."scripts" = ["/usr/local/maxicode/maxiwall/maxiwall.lua"] | .)' /etc/suricata/suricata.yaml
+  get_status_message "$?"
+  echo ""
+
+  echo "[${caller}]: Removing all existing rules from suricata.yaml and leaving suricata.rules and /usr/local/maxicode/maxiwall/maxiwall.rules ..."
+  jq eval --inplace '.rule-files = ["suricata.rules", "/usr/local/maxicode/maxiwall/maxiwall.rules"]' /etc/suricata/suricata.yaml
+  get_status_message "$?"
+  echo ""
+
+  # Copying enable.conf into /etc/suricata/
+  echo "[${caller}]: Copying ${SCRIPT_PATH}/enable.conf into /etc/suricata/enable.conf ..."
+  cp -f "${SCRIPT_PATH}/enable.conf" /etc/suricata/enable.conf
+  get_status_message "$?"
+  echo ""
+
+  # Copying disable.conf into /etc/suricata/
+  echo "[${caller}]: Copying ${SCRIPT_PATH}/disable.conf into /etc/suricata/disable.conf ..."
+  cp -f "${SCRIPT_PATH}/disable.conf" /etc/suricata/disable.conf
+  get_status_message "$?"
+  echo ""
+
+  # Copying drop.conf into /etc/suricata/
+  echo "[${caller}]: Copying ${SCRIPT_PATH}/drop.conf into /etc/suricata/drop.conf ..."
+  cp -f "${SCRIPT_PATH}/drop.conf" /etc/suricata/drop.conf
+  get_status_message "$?"
+  echo ""
+
+  # Copying maxiwall.lua into MAXIWALL_LUA_SCRIPT
+  echo "[${caller}]: Copying ${SCRIPT_PATH}/maxiwall.lua into ${MAXIWALL_LUA_SCRIPT} ..."
+  cp -f "${SCRIPT_PATH}/maxiwall.lua" "${MAXIWALL_LUA_SCRIPT}"
+  get_status_message "$?"
+  echo ""
+
+  # Make sure maxiwall.lua is executable
+  echo "[${caller}]: Making sure ${MAXIWALL_LUA_SCRIPT} is executable ..."
+  chmod +x "${MAXIWALL_LUA_SCRIPT}"
+  get_status_message "$?"
+  echo ""
+
+  # Start suricata service
+  echo "[${caller}]: Starting suricata service ..."
+  systemctl restart suricata.service
+  get_status_message "$?"
+  echo ""
+
+  # Checking whether suricata log file is free from a warning line ...
+  echo "[${caller}]: Checking whether suricata log file is free from a warning line before a message All AFP capture threads are running ..."
+  while ! grep -q "All AFP capture threads are running" "${SURICATA_LOG_FILE}"; do
+    if grep -q "<Warning>" "${SURICATA_LOG_FILE}"; then
+      echo "Suricata log file contains a warning line. Please check the log file and fix the issue."
+      exit 1
+    fi
+  done
+
+}
+
+test_config() {
+  # Stopping suricata
+  echo "[${SCRIPT_NAME}]: Stopping suricata.service ..."
+  systemctl stop suricata
+
+  # Remove all existing rules from suricata.yaml
+  echo "[${caller}]: Setting suricata.yaml to use test rules file ..."
+  yq eval --inplace '.rule-files = ["/usr/local/maxicode/maxiwall/maxiwall-test.rules"]' "${SURICATA_YAML}"
+  get_status_message "$?"
+  echo ""
+
+  echo "[${SCRIPT_NAME}]: Running suricata in test mode ..."
+  suricata -v -c "${SURICATA_TEST}" -i eth0 --init-errors-fatal
+
+  # Restore suricata.yaml
+  echo "[${caller}]: Restoring suricata.yaml ..."
+  yq eval --inplace '.rule-files = ["suricata.rules", "/usr/local/maxicode/maxiwall/maxiwall.rules"]' "${SURICATA_YAML}"
+  get_status_message "$?"
+  echo ""
+
+  # Starting suricata
+  echo "[${SCRIPT_NAME}]: Starting suricata.service ..."
+  systemctl restart suricata
+  get_status_message "$?"
+  echo ""
+}
+
 ############################
 # MAIN FUNCTION START HERE #
 ############################
@@ -959,8 +1046,8 @@ SURICATA_YAML="/etc/suricata/suricata.yaml"
 # Log file is defined in suricata.yaml
 SURICATA_DEFAULT_LOG_DIR="$(yq -r '.default-log-dir' "${SURICATA_YAML}")"
 SURICATA_LOG_FILE="${SURICATA_DEFAULT_LOG_DIR}/$(yq -r '.logging.outputs[1].file.filename' "${SURICATA_YAML}")"
-FAST_LOG_FILE="${SURICATA_DEFAULT_LOG_DIR}/$(yq -r '.outputs[] | select(.fast) | .fast.filename' "${SURICATA_YAML}")"
-HTTP_LOG_FILE="${SURICATA_DEFAULT_LOG_DIR}/$(yq -r '.outputs[] | select(.http-log) | .http-log.filename' "${SURICATA_YAML}")"
+# FAST_LOG_FILE="${SURICATA_DEFAULT_LOG_DIR}/$(yq -r '.outputs[] | select(.fast) | .fast.filename' "${SURICATA_YAML}")"
+# TTP_LOG_FILE="${SURICATA_DEFAULT_LOG_DIR}/$(yq -r '.outputs[] | select(.http-log) | .http-log.filename' "${SURICATA_YAML}")"
 
 # Lua script directory is defined in suricata.yaml
 LUA_SCRIPTS_DIR="$(yq -r '.outputs[] | select(.lua.scripts-dir) | .lua.scripts-dir' "${SURICATA_YAML}")"
@@ -969,8 +1056,8 @@ MAXIWALL_LUA_SCRIPT="${LUA_SCRIPTS_DIR}/maxiwall.lua"
 # Rule file is defined in suricata.yaml
 SURICATA_SURICATA_DEFAULT_RULES_PATH="$(yq -r '.default-rule-path' "${SURICATA_YAML}")"
 SURICATA_RULES_FILE="${SURICATA_SURICATA_DEFAULT_RULES_PATH}/suricata.rules"
-MAXIWALL_RULES_FILE="/etc/suricata/rules/maxiwall.rules"
-TEST_RULES_FILE="/etc/suricata/rules/test.rules"
+MAXIWALL_RULES_FILE="${SCRIPT_PATH}/maxiwall.rules"
+TEST_RULES_FILE="${SCRIPT_PATH}/maxiwall-test.rules"
 
 SHORT_OPT_SPECS=":hvsc:t:-:"
 LONG_OPT_SPECS=(["config"]=1 ["ip"]=1 ["ip-address"]=1 ["domain"]=1 ["domain-name"]=1 ["target"]=1 ["input-file"]=1 ["netmask"]=1 ["categories"]=1 ["comment"]=1 ["comments"]=1)
@@ -1119,7 +1206,7 @@ elif [[ "${ACTION^^}" == +(--STOP|STOP) ]]; then
   RETVAL=$?
   exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(--INIT|INIT|INITIALIZE) ]]; then
-  init "$@"
+  init_config "$@"
   RETVAL=$?
   exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(--START|START) ]]; then
@@ -1138,16 +1225,22 @@ elif [[ "${ACTION^^}" == +(GET-OUTPUT-PATH|OUTPUT-PATH) ]]; then
   exit "$?"
 elif [[ "${ACTION^^}" == +(EDIT-LUA-SCRIPT|EDIT-LUA) ]]; then
   edit_file "${MAXIWALL_LUA_SCRIPT}"
-elif [[ "${ACTION^^}" == +(EDIT-SURICATA-RULE) ]]; then
+elif [[ "${ACTION^^}" == +(EDIT-SURICATA-RULE|EDIT-SURICATA-RULES) ]]; then
   edit_file "${SURICATA_RULES_FILE}"
-elif [[ "${ACTION^^}" == +(EDIT-MAXIWALL-RULE) ]]; then
+elif [[ "${ACTION^^}" == +(EDIT-MAXIWALL-RULE|EDIT-MAXIWALL-RULES|EDIT-RULE|EDIT-RULES) ]]; then
   edit_file "${MAXIWALL_RULES_FILE}"
+elif [[ "${ACTION^^}" == +(EDIT) ]]; then
+  edit_file "${SCRIPT_PATH}/${SCRIPT_NAME}"
 elif [[ "${ACTION^^}" == +(EDIT-TEST-RULE) ]]; then
   edit_file "${TEST_RULES_FILE}"
 elif [[ "${ACTION^^}" == +(DEBUG-LOG) ]]; then
   cat /dev/null >"${SURICATA_LOG_FILE}"
   systemctl restart suricata
   tail -f "${SURICATA_LOG_FILE}"
+elif [[ "${ACTION^^}" == +(TEST-RULE|TEST-RULES) ]]; then
+  test_config "$@"
+  RETVAL=$?
+  exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(EDIT-MAXIWALL-CONFIG|EDIT-CONFIG) ]]; then
   edit_file "${CONFIG_FILE}"
 elif [[ "${ACTION^^}" == +(EDIT-SURICATA-CONFIG|EDIT-SURICATA-YAML) ]]; then
@@ -1182,7 +1275,6 @@ elif [[ "${ACTION^^}" == +(VIRUSTOTAL-SCAN) ]]; then
   get_virustotal_score "$@"
   RETVAL=$?
   exit ${RETVAL}
-
 elif [[ "${ACTION^^}" == +(MODSECURITY-SCAN) ]]; then
   read_config
   get_modsecurity_score "$@"
