@@ -367,7 +367,7 @@ scan() {
   if [[ "${ABUSEIPDB_ENABLE_SCAN}" == "true" ]]; then
     if command -v aipdb >/dev/null 2>&1; then
       # echo "[${caller}]: Scanning target ${target} using AbuseIPDB ..."
-      aipdb check -ko "${OUTPUT_PATH}/aipdb_output.json" -t "${target}"
+      aipdb check -ko "${OUTPUT_PATH}/aipdb_output.log" -t "${target}"
     else
       echo "[Skipped]: aipdb is not installed"
     fi
@@ -379,7 +379,7 @@ scan() {
   if [[ "${BLCHECK_ENABLE_SCAN}" == "true" ]]; then
     if command -v blcheck >/dev/null 2>&1; then
       # echo "[${caller}]: Scanning ${target} using blcheck ..."
-      blcheck -ko "${OUTPUT_PATH}/blcheck_output.json" -l "${CONFIG_PATH}/blcheck_service_list" "${target}"
+      blcheck -ko "${OUTPUT_PATH}/blcheck_output.log" -l "${CONFIG_PATH}/blcheck_service_list" "${target}"
     else
       echo "[Skipped]: blcheck is not installed"
     fi
@@ -391,7 +391,7 @@ scan() {
   if [[ "${GREYNOISE_ENABLE_SCAN}" == "true" ]]; then
     if command -v greynoise >/dev/null 2>&1; then
       # echo "[${caller}]: Scanning target ${target} using greynoise ..."
-      greynoise check -ko "${OUTPUT_PATH}/greynoise_output.json" -t "${target}"
+      greynoise check -ko "${OUTPUT_PATH}/greynoise_output.log" -t "${target}"
     else
       echo "[Skipped]: greynoise is not installed"
     fi
@@ -403,7 +403,7 @@ scan() {
   if [[ "${VIRUSTOTAL_ENABLE_SCAN}" == "true" ]]; then
     if command -v virustotal >/dev/null 2>&1; then
       # echo "[${caller}]: Scanning target ${target} using virustotal ..."
-      virustotal check -ko "${OUTPUT_PATH}/virustotal_output.json" -t "${target}"
+      virustotal check -ko "${OUTPUT_PATH}/virustotal_output.log" -t "${target}"
     else
       echo "[Skipped]: virustotal is not installed"
     fi
@@ -578,7 +578,7 @@ get_aipdb_score() {
 
   if [[ "${ABUSEIPDB_ENABLE_SCAN}" == "true" ]]; then
     if command -v aipdb >/dev/null 2>&1; then
-      aipdb check -sko "${OUTPUT_PATH}/aipdb_output.json" -t "${target}"
+      aipdb check -sko "${OUTPUT_PATH}/aipdb_output.log" -t "${target}"
     else
       error "aipdb is not installed"
     fi
@@ -596,7 +596,7 @@ get_blcheck_score() {
   target="${TARGET}"
   if [[ "${BLCHECK_ENABLE_SCAN}" == "true" ]]; then
     if command -v blcheck >/dev/null 2>&1; then
-      blcheck -sko "${OUTPUT_PATH}/blcheck_output.json" -l "${CONFIG_PATH}/blcheck_service_list" "${target}"
+      blcheck -sko "${OUTPUT_PATH}/blcheck_output.log" -l "${CONFIG_PATH}/blcheck_service_list" "${target}"
     else
       error "blcheck is not installed"
     fi
@@ -615,7 +615,7 @@ get_greynoise_score() {
   target="${TARGET}"
   if [[ "${GREYNOISE_ENABLE_SCAN}" == "true" ]]; then
     if command -v greynoise >/dev/null 2>&1; then
-      greynoise check -sko "${OUTPUT_PATH}/greynoise_output.json" -t "${target}"
+      greynoise check -sko "${OUTPUT_PATH}/greynoise_output.log" -t "${target}"
     else
       error "greynoise is not installed"
     fi
@@ -634,7 +634,7 @@ get_virustotal_score() {
   if [[ "${VIRUSTOTAL_ENABLE_SCAN}" == "true" ]]; then
     if command -v virustotal >/dev/null 2>&1; then
       # echo "[${caller}]: Scanning target ${target} using virustotal ..."
-      virustotal check -sko "${OUTPUT_PATH}/virustotal_output.json" -t "${target}"
+      virustotal check -sko "${OUTPUT_PATH}/virustotal_output.log" -t "${target}"
     else
       error "virustotal is not installed"
     fi
